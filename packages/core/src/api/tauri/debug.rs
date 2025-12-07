@@ -73,13 +73,13 @@ impl TauriLauncherDebugApi for TauriLauncherDebugApiImpl {
 		version().to_string()
 	}
 
-	async fn get_commit_hash(self) -> LauncherResult<String> {
-		let hash = std::env::var("GIT_HASH").map_err(anyhow::Error::from)?;
+	async fn get_commit_hash(self) -> LauncherResult<&'static str> {
+		let hash = option_env!("GIT_HASH").unwrap_or("null");
 		Ok(hash)
 	}
 
-	async fn get_build_timestamp(self) -> LauncherResult<String> {
-		let timestamp = std::env::var("BUILD_TIMESTAMP").map_err(anyhow::Error::from)?;
+	async fn get_build_timestamp(self) -> LauncherResult<&'static str> {
+		let timestamp = option_env!("BUILD_TIMESTAMP").unwrap_or("null");
 		Ok(timestamp)
 	}
 }
