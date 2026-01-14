@@ -21,6 +21,7 @@ oneclient:
 - changed-files:
   - any-glob-to-any-file:
     - apps/oneclient/**
+    - docs/OneClient/**
 
 onelauncher:
 - changed-files:
