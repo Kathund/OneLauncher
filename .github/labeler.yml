@@ -1,0 +1,35 @@
+core:
+- changed-files:
+  - any-glob-to-any-file:
+    - packages/core/**
+
+documentation:
+- changed-files:
+  - any-glob-to-any-file:
+    - docs/**
+    - '**/*.md'
+
+javascript:
+- changed-files:
+  - any-glob-to-any-file:
+    - '**/*.js'
+    - '**/*.jsx'
+    - '**/*.ts'
+    - '**/*.tsx'
+
+oneclient:
+- changed-files:
+  - any-glob-to-any-file:
+    - apps/oneclient/**
+    - docs/OneClient/**
+
+onelauncher:
+- changed-files:
+  - any-glob-to-any-file:
+    - apps/onelauncher/**
+
+rust:
+- changed-files:
+  - any-glob-to-any-file:
+    - '**/*.rs'
+
