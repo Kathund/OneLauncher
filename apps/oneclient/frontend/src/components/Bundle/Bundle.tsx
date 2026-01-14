@@ -13,6 +13,7 @@ export function Bundle({ files, cluster }: BundleProps) {
 	const { useVerticalGridLayout } = useModCardContext();
 	const { setting } = useSettings();
 	const useGridLayout = setting('mod_list_use_grid');
+	console.log('meow');
 
 	return (
 		<OverlayScrollbarsComponent className="bg-page-elevated rounded-lg">

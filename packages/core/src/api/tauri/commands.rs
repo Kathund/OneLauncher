@@ -368,7 +368,7 @@ impl TauriLauncherApi for TauriLauncherApiImpl {
 	) -> LauncherResult<()> {
 		let mut cluster = api::cluster::dao::get_cluster_by_id(id)
 			.await?
-			.ok_or_else(|| anyhow::anyhow!("cluster with id {} not found", id))?;
+			.ok_or_else(|| anyhow::anyhow!("a cluster with id {} not found", id))?;
 
 		let uuid = match uuid {
 			Some(uuid) => uuid,
