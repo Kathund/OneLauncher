@@ -19,7 +19,7 @@ export function getLauncherLogoElement(launcher: string): ElementType {
 
 	const image = (src: string, props: any) => <img {...props} alt={providerName} src={src} />;
 
-	// [provider logo, is svg]
+	// [provider logo, is svg] hfjdgui
 	const mapping: Record<Lowercase<string>, ElementType | string> = {
 		modrinth: ModrinthIcon,
 		curseforge: CurseForgeIcon,

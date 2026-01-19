@@ -1,4 +1,4 @@
-# 1.0.0-alpha.6
+# 1.0.0-alpha.6 ijn
 
 ###
 - Refresh accounts automatically
