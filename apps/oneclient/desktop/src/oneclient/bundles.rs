@@ -392,6 +392,14 @@ async fn apply_bundle_update(
 	let linked_hashes: HashSet<String> = linked_packages.iter().map(|p| p.hash.clone()).collect();
 
 	let new_hashes = collect_bundle_package_hashes(bundle);
+
+	// Old bundle hashes that no longer appear in the new bundle (replaced/removed packages)
+	let removed_old_hashes: HashSet<&String> = old_info
+		.package_hashes
+		.iter()
+		.filter(|h| !new_hashes.contains(*h))
+		.collect();
+
 	let mut errors = Vec::new();
 	let mut packages_to_link = Vec::new();
 
@@ -416,43 +424,45 @@ async fn apply_bundle_update(
 			continue;
 		}
 
-		// Check if this is a new package or an update to an existing bundle package.
-		// If this file's hash is not in the old bundle's hashes, it's either:
-		// 1. A brand new package added to the bundle -> install it
-		// 2. An updated version of a package that was in the old bundle
-		//    -> only install if the user still has the old version linked
-		let is_new_to_bundle = !old_info.package_hashes.iter().any(|old_hash| {
-			// Check if any old bundle hash is for the same project (different version)
-			is_same_project_different_version(old_hash, file_hash, &file.kind)
-		});
+		if old_info.package_hashes.contains(file_hash) {
+			// Hash is already tracked but not linked — user removed this mod, skip
+			tracing::debug!(
+				"skipping bundle package with hash {file_hash} (user previously removed it)"
+			);
+			continue;
+		}
 
-		if is_new_to_bundle {
-			// Brand new package in the bundle, install it
-			match download_and_link_file(file, cluster).await {
-				Ok(Some(model)) => packages_to_link.push(model),
-				Ok(None) => {}
-				Err(e) => errors.push(e),
-			}
-		} else {
-			// Updated version of an existing bundle package.
-			// Only install if the user still has the OLD version linked
-			// (i.e., they didn't manually remove it).
-			let user_has_old = old_info
-				.package_hashes
+		// This is a new hash not in the old bundle. It's either:
+		// 1. A brand new package added to the bundle
+		// 2. An updated version replacing an old package
+		//
+		// For brand new packages: always install.
+		// For updated packages: only install if the user still has the old
+		// version linked (respects user removals).
+		let is_replacing_old = !removed_old_hashes.is_empty();
+
+		if is_replacing_old {
+			// Check if the user still has ANY of the removed old bundle packages
+			// linked. If they removed all old bundle packages, they likely don't
+			// want the bundle mods at all.
+			let user_kept_old_mods = removed_old_hashes
 				.iter()
-				.any(|old_hash| linked_hashes.contains(old_hash));
+				.any(|old_hash| linked_hashes.contains(*old_hash));
 
-			if user_has_old {
-				match download_and_link_file(file, cluster).await {
-					Ok(Some(model)) => packages_to_link.push(model),
-					Ok(None) => {}
-					Err(e) => errors.push(e),
-				}
-			} else {
+			if !user_kept_old_mods {
 				tracing::debug!(
-					"skipping updated bundle package (user removed the old version)"
+					"skipping updated bundle package with hash {file_hash} \
+					(user removed old bundle packages)"
 				);
+				continue;
 			}
+		}
+
+		// Install this new/updated package
+		match download_and_link_file(file, cluster).await {
+			Ok(Some(model)) => packages_to_link.push(model),
+			Ok(None) => {}
+			Err(e) => errors.push(e),
 		}
 	}
 
@@ -465,35 +475,22 @@ async fn apply_bundle_update(
 		.await?;
 		if linked < packages_to_link.len() as u64 {
 			tracing::warn!(
-				"not all updated bundle packages could be linked to the cluster"
+				"only {linked}/{} updated bundle packages could be linked to cluster '{}'",
+				packages_to_link.len(),
+				cluster.folder_name
 			);
 		}
 	}
 
 	if !errors.is_empty() {
 		tracing::warn!(
-			"{} errors occurred while applying bundle update",
-			errors.len()
+			"{} errors occurred while applying bundle update for cluster '{}'",
+			errors.len(),
+			cluster.folder_name
 		);
 	}
 
 	Ok(new_hashes)
-}
-
-/// Helper to check if two package hashes represent different versions of the
-/// same project (used to detect updates vs new additions in a bundle).
-fn is_same_project_different_version(
-	_old_hash: &str,
-	_new_hash: &str,
-	_new_kind: &ModpackFileKind,
-) -> bool {
-	// Since we can't look up the old hash's project info without DB access here,
-	// we take a conservative approach: if the old hash is not in the new bundle's
-	// hashes, we treat it as an update candidate. The caller checks whether the
-	// user still has the old version linked before installing.
-	// This means: any hash in old_info that's NOT in the new bundle is assumed
-	// to have been replaced by a new hash.
-	true
 }
 
 /// Downloads a single package from a bundle manifest file entry.
