@@ -215,7 +215,9 @@ impl BundlesManager {
 	/// Save the installed bundles state to disk
 	async fn save_installed_state(&self) -> LauncherResult<()> {
 		let path = Self::installed_state_path().await;
-		io::create_dir_all(path.parent().unwrap()).await?;
+		if let Some(parent) = path.parent() {
+			io::create_dir_all(parent).await?;
+		}
 		let state = self.installed_state.read().await;
 		io::write_json(&path, &*state).await?;
 		Ok(())
