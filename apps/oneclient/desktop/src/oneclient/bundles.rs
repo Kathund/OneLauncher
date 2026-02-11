@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use onelauncher_core::api::cluster::dao::ClusterId;
 use onelauncher_core::api::packages::modpack::data::ModpackArchive;
 use onelauncher_core::api::packages::modpack::{InstallableModpackFormatExt, ModpackFormat};
 use onelauncher_core::entity::loader::GameLoader;
@@ -27,12 +28,28 @@ struct BundleManifest {
 	pub versions: HashMap<String, HashMap<String, Vec<String>>>,
 }
 
+/// Tracks which bundles have been installed to which clusters, along with
+/// the version that was installed. This allows us to detect when a bundle
+/// has been updated in the DataStorage repo and seamlessly re-apply it.
+#[derive(Default, Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct InstalledBundlesState {
+	/// Map of "cluster_id:bundle_name" -> installed version string
+	pub installed: HashMap<String, String>,
+}
+
+impl InstalledBundlesState {
+	fn key(cluster_id: ClusterId, bundle_name: &str) -> String {
+		format!("{cluster_id}:{bundle_name}")
+	}
+}
+
 static BUNDLES_STATE: OnceCell<BundlesManager> = OnceCell::const_new();
 
 #[derive(Debug)]
 pub struct BundlesManager {
 	manifest: RwLock<BundleManifest>,
 	bundles: RwLock<HashMap<String, HashMap<GameLoader, Vec<ModpackArchive>>>>,
+	installed_state: RwLock<InstalledBundlesState>,
 }
 
 impl BundlesManager {
@@ -40,10 +57,12 @@ impl BundlesManager {
 		BUNDLES_STATE
 			.get_or_init(|| async {
 				let manifest = Self::fetch_cached().await;
+				let installed_state = Self::load_installed_state().await;
 
 				Self {
 					manifest: RwLock::new(manifest),
 					bundles: RwLock::new(HashMap::new()),
+					installed_state: RwLock::new(installed_state),
 				}
 			})
 			.await
@@ -171,6 +190,144 @@ impl BundlesManager {
 			.expect("failed to get caches dir")
 			.join("oneclient")
 			.join("bundles")
+	}
+
+	/// Path to the file tracking which bundles have been installed
+	async fn installed_state_path() -> std::path::PathBuf {
+		Self::dir().await.join("installed_bundles.json")
+	}
+
+	/// Load the installed bundles state from disk
+	async fn load_installed_state() -> InstalledBundlesState {
+		let path = Self::installed_state_path().await;
+		if !path.exists() {
+			return InstalledBundlesState::default();
+		}
+		match io::read_json::<InstalledBundlesState>(&path).await {
+			Ok(state) => state,
+			Err(e) => {
+				tracing::error!("failed to read installed bundles state: {e}");
+				InstalledBundlesState::default()
+			}
+		}
+	}
+
+	/// Save the installed bundles state to disk
+	async fn save_installed_state(&self) -> LauncherResult<()> {
+		let path = Self::installed_state_path().await;
+		io::create_dir_all(path.parent().unwrap()).await?;
+		let state = self.installed_state.read().await;
+		io::write_json(&path, &*state).await?;
+		Ok(())
+	}
+
+	/// Records that a bundle was installed for a given cluster
+	pub async fn record_installed_bundle(
+		&self,
+		cluster_id: ClusterId,
+		bundle: &ModpackArchive,
+	) -> LauncherResult<()> {
+		let key = InstalledBundlesState::key(cluster_id, &bundle.manifest.name);
+		let mut state = self.installed_state.write().await;
+		state
+			.installed
+			.insert(key, bundle.manifest.version.clone());
+		drop(state);
+		self.save_installed_state().await
+	}
+
+	/// Checks all clusters for bundle updates and re-installs any that have changed.
+	/// This is called on startup to seamlessly keep bundles up to date.
+	#[tracing::instrument(skip(self))]
+	pub async fn check_and_apply_bundle_updates(&self) -> LauncherResult<()> {
+		let clusters = onelauncher_core::api::cluster::dao::get_all_clusters().await?;
+
+		let state = self.installed_state.read().await;
+		if state.installed.is_empty() {
+			tracing::debug!("no installed bundles to check for updates");
+			return Ok(());
+		}
+		drop(state);
+
+		for cluster in &clusters {
+			let bundles = match self
+				.get_bundles_for(&cluster.mc_version, cluster.mc_loader)
+				.await
+			{
+				Ok(b) => b,
+				Err(e) => {
+					tracing::error!(
+						"failed to get bundles for cluster {}: {e}",
+						cluster.folder_name
+					);
+					continue;
+				}
+			};
+
+			for bundle in &bundles {
+				let key = InstalledBundlesState::key(cluster.id, &bundle.manifest.name);
+
+				let installed_version = {
+					let state = self.installed_state.read().await;
+					state.installed.get(&key).cloned()
+				};
+
+				let Some(installed_version) = installed_version else {
+					continue;
+				};
+
+				if installed_version == bundle.manifest.version {
+					tracing::debug!(
+						"bundle '{}' for cluster '{}' is up to date (version {})",
+						bundle.manifest.name,
+						cluster.folder_name,
+						installed_version
+					);
+					continue;
+				}
+
+				tracing::info!(
+					"updating bundle '{}' for cluster '{}': {} -> {}",
+					bundle.manifest.name,
+					cluster.folder_name,
+					installed_version,
+					bundle.manifest.version
+				);
+
+				if let Err(e) = bundle
+					.format
+					.install_modpack_archive(bundle, cluster, Some(true), None)
+					.await
+				{
+					tracing::error!(
+						"failed to update bundle '{}' for cluster '{}': {e}",
+						bundle.manifest.name,
+						cluster.folder_name
+					);
+					continue;
+				}
+
+				// Update the tracked version
+				{
+					let mut state = self.installed_state.write().await;
+					state
+						.installed
+						.insert(key, bundle.manifest.version.clone());
+				}
+
+				if let Err(e) = self.save_installed_state().await {
+					tracing::error!("failed to save installed bundles state: {e}");
+				}
+
+				tracing::info!(
+					"successfully updated bundle '{}' for cluster '{}'",
+					bundle.manifest.name,
+					cluster.folder_name
+				);
+			}
+		}
+
+		Ok(())
 	}
 }
 

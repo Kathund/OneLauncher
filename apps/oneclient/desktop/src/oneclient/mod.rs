@@ -11,6 +11,10 @@ pub async fn initialize_oneclient() {
 	}
 
 	tokio::spawn(async {
-		bundles::BundlesManager::get().await;
+		let manager = bundles::BundlesManager::get().await;
+
+		if let Err(err) = manager.check_and_apply_bundle_updates().await {
+			tracing::error!("failed to check for bundle updates: {err}");
+		}
 	});
 }
