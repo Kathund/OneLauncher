@@ -169,9 +169,9 @@ function DownloadingMods({ mods, bundlesPerCluster, setOpen, nextPath }: { mods:
 				const clusterId = Number(clusterIdStr);
 				for (const bundle of bundles) {
 					const enabledFiles = bundle.manifest.files.filter(f => f.enabled);
-					const anyIncluded = enabledFiles.some(f =>
+					const allIncluded = enabledFiles.length > 0 && enabledFiles.every(f =>
 						remainingMods.some(m => modMatchesFile(m, f, clusterId)));
-					if (anyIncluded) {
+					if (allIncluded) {
 						bundlesToInstall.push({ bundle, clusterId });
 						for (const f of enabledFiles) {
 							const idx = remainingMods.findIndex(m => modMatchesFile(m, f, clusterId));
