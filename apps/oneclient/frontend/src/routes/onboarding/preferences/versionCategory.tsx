@@ -1,6 +1,6 @@
 import type { ClusterModel, ModpackArchive, ModpackFile } from '@/bindings.gen';
 import type { DownloadModsRef, ModCardContextApi, onClickOnMod } from '@/components';
-import type { StrippedCLuster } from '@/routes/onboarding/preferences/version';
+import type { StrippedCluster } from '@/routes/onboarding/preferences/version';
 import { BundleModListModal, DownloadMods, ModCardContext, Overlay } from '@/components';
 import { bindings } from '@/main';
 import { OnboardingNavigation } from '@/routes/onboarding/route';
@@ -30,7 +30,7 @@ function HandleCLuster(cluster: ClusterModel): Array<ModpackArchive> {
 }
 
 function RouteComponent() {
-	const selectedClusters: Array<StrippedCLuster> = JSON.parse(localStorage.getItem('selectedClusters') ?? '[]');
+	const selectedClusters: Array<StrippedCluster> = JSON.parse(localStorage.getItem('selectedClusters') ?? '[]');
 
 	const { data: versions } = useCommandSuspense(['getVersions'], () => bindings.oneclient.getVersions());
 	const { data: clusters } = useCommandSuspense(['getClusters'], () => bindings.core.getClusters());
@@ -61,6 +61,11 @@ function RouteComponent() {
 		}, {} as Record<string, Array<ModpackFile>>),
 	);
 
+	const bundlesPerCluster: Record<string, Array<ModpackArchive>> = clusters.reduce((acc, cluster, i) => {
+		acc[cluster.id] = bundleQueries[i];
+		return acc;
+	}, {} as Record<string, Array<ModpackArchive>>);
+
 	const downloadModsRef = useRef<DownloadModsRef>(null);
 
 	return (
@@ -82,7 +87,7 @@ function RouteComponent() {
 							</div>
 
 							<div className="hidden">
-								<DownloadMods modsPerCluster={modsPerCluster} ref={downloadModsRef} />
+								<DownloadMods bundlesPerCluster={bundlesPerCluster} modsPerCluster={modsPerCluster} ref={downloadModsRef} />
 							</div>
 						</div>
 					</OverlayScrollbarsComponent>
