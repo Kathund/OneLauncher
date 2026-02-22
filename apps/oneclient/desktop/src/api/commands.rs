@@ -21,12 +21,6 @@ pub trait OneClientApi {
 	#[taurpc(alias = "getVersions")]
 	async fn get_versions() -> LauncherResult<OnlineClusterManifest>;
 
-	#[taurpc(alias = "installBundle")]
-	async fn install_bundle(
-		modpack: ModpackArchive,
-		cluster_id: ClusterId,
-	) -> LauncherResult<()>;
-
 	#[taurpc(alias = "checkForUpdate")]
 	async fn check_for_update<R: Runtime>(
 		app_handle: AppHandle<R>,
@@ -86,33 +80,6 @@ impl OneClientApi for OneClientApiImpl {
 
 	async fn get_versions(self) -> LauncherResult<OnlineClusterManifest> {
 		get_data_storage_versions().await
-	}
-
-	async fn install_bundle(
-		self,
-		modpack: ModpackArchive,
-		cluster_id: ClusterId,
-	) -> LauncherResult<()> {
-		let cluster = onelauncher_core::api::cluster::dao::get_cluster_by_id(cluster_id)
-			.await?
-			.ok_or_else(|| {
-				onelauncher_core::error::LauncherError::from(anyhow::anyhow!(
-					"cluster with id {} not found",
-					cluster_id
-				))
-			})?;
-
-		modpack
-			.format
-			.install_modpack_archive(&modpack, &cluster, Some(true), None)
-			.await?;
-
-		BundlesManager::get()
-			.await
-			.record_installed_bundle(cluster_id, &modpack)
-			.await?;
-
-		Ok(())
 	}
 
 	async fn check_for_update<R: Runtime>(

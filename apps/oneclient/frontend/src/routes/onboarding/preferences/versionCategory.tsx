@@ -61,11 +61,6 @@ function RouteComponent() {
 		}, {} as Record<string, Array<ModpackFile>>),
 	);
 
-	const bundlesPerCluster: Record<string, Array<ModpackArchive>> = clusters.reduce((acc, cluster, i) => {
-		acc[cluster.id] = bundleQueries[i];
-		return acc;
-	}, {} as Record<string, Array<ModpackArchive>>);
-
 	const downloadModsRef = useRef<DownloadModsRef>(null);
 
 	return (
@@ -87,7 +82,7 @@ function RouteComponent() {
 							</div>
 
 							<div className="hidden">
-								<DownloadMods bundlesPerCluster={bundlesPerCluster} modsPerCluster={modsPerCluster} ref={downloadModsRef} />
+								<DownloadMods modsPerCluster={modsPerCluster} ref={downloadModsRef} />
 							</div>
 						</div>
 					</OverlayScrollbarsComponent>

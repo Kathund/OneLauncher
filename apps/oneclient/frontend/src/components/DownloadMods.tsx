@@ -1,4 +1,4 @@
-import type { ExternalPackage, ManagedVersionDependency, ModpackArchive, ModpackFile, Provider } from '@/bindings.gen';
+import type { ExternalPackage, ManagedVersionDependency, ModpackFile, Provider } from '@/bindings.gen';
 import { getModMetaDataName, Overlay } from '@/components';
 import { bindings } from '@/main';
 import { useCommandMut } from '@onelauncher/common';
@@ -35,7 +35,7 @@ export function isManagedMod(mod: ModData): mod is ManagedModData {
 	return mod.managed === true;
 }
 
-export function DownloadMods({ modsPerCluster, bundlesPerCluster, ref }: { modsPerCluster: Record<string, Array<ModpackFile>>; bundlesPerCluster: Record<string, Array<ModpackArchive>>; ref: React.Ref<DownloadModsRef> }) {
+export function DownloadMods({ modsPerCluster, ref }: { modsPerCluster: Record<string, Array<ModpackFile>>; ref: React.Ref<DownloadModsRef> }) {
 	const navigate = useNavigate();
 	const [isOpen, setOpen] = useState<boolean>(false);
 	const [mods, setMods] = useState<ModDataArray>([]);
@@ -88,12 +88,7 @@ export function DownloadMods({ modsPerCluster, bundlesPerCluster, ref }: { modsP
 			<Button className="mb-4" isDisabled={mods.length === 0} onPress={() => setOpen(prev => !prev)}>Download Mods</Button>
 
 			<Overlay isDismissable={false} isOpen={isOpen}>
-				<DownloadingMods
-					bundlesPerCluster={bundlesPerCluster}
-					mods={mods}
-					nextPath={nextPath}
-					setOpen={setOpen}
-				/>
+				<DownloadingMods mods={mods} nextPath={nextPath} setOpen={setOpen} />
 			</Overlay>
 		</DialogTrigger>
 	);
@@ -110,10 +105,9 @@ function downloadModsParallel(items: ModDataArray, limit: number, fn: (mod: ModD
 	return Promise.all(workers);
 }
 
-function DownloadingMods({ mods, bundlesPerCluster, setOpen, nextPath }: { mods: ModDataArray; bundlesPerCluster: Record<string, Array<ModpackArchive>>; setOpen: React.Dispatch<React.SetStateAction<boolean>>; nextPath: string }) {
+function DownloadingMods({ mods, setOpen, nextPath }: { mods: ModDataArray; setOpen: React.Dispatch<React.SetStateAction<boolean>>; nextPath: string }) {
 	const navigate = useNavigate();
 	const [downloadedMods, setDownloadedMods] = useState(0);
-	const [totalItems, setTotalItems] = useState(0);
 	const [modName, setModName] = useState<string | null>(null);
 	const download = useCommandMut(async (mod: ModData) => {
 		if (isManagedMod(mod)) {
@@ -136,63 +130,7 @@ function DownloadingMods({ mods, bundlesPerCluster, setOpen, nextPath }: { mods:
 
 	useEffect(() => {
 		const downloadAll = async () => {
-			let remainingMods = [...mods];
-			const bundlesToInstall: Array<{ bundle: ModpackArchive; clusterId: number }> = [];
-
-			function modMatchesFile(mod: ModData, file: ModpackFile, clusterId: number): boolean {
-				if (mod.clusterId !== clusterId)
-					return false;
-				if (mod.managed) {
-					if ('Managed' in file.kind) {
-						const [pkg, version] = file.kind.Managed;
-						return (
-							mod.provider === pkg.provider
-							&& mod.id === pkg.id
-							&& mod.versionId === version.version_id
-						);
-					}
-					return false;
-				}
-				else {
-					if ('External' in file.kind)
-						return mod.package.sha1 === file.kind.External.sha1;
-
-					return false;
-				}
-			}
-
-			for (const [clusterIdStr, bundles] of Object.entries(bundlesPerCluster)) {
-				const clusterId = Number(clusterIdStr);
-				for (const bundle of bundles) {
-					const enabledFiles = bundle.manifest.files.filter(f => f.enabled);
-					const allIncluded = enabledFiles.length > 0 && enabledFiles.every(f =>
-						remainingMods.some(m => modMatchesFile(m, f, clusterId)));
-					if (allIncluded) {
-						bundlesToInstall.push({ bundle, clusterId });
-						for (const f of enabledFiles) {
-							const idx = remainingMods.findIndex(m => modMatchesFile(m, f, clusterId));
-							if (idx !== -1)
-								remainingMods.splice(idx, 1);
-						}
-					}
-				}
-			}
-
-			const items = bundlesToInstall.length + remainingMods.length;
-			setTotalItems(items);
-			setDownloadedMods(0);
-
-			for (const { bundle, clusterId } of bundlesToInstall) {
-				setModName(bundle.manifest.name);
-				try {
-					await bindings.oneclient.installBundle(bundle, clusterId);
-				}
-				finally {
-					setDownloadedMods(prev => prev + 1);
-				}
-			}
-
-			await downloadModsParallel(remainingMods, 10, async (mod) => {
+			await downloadModsParallel(mods, 10, async (mod) => {
 				setModName(mod.name);
 				try {
 					await download.mutateAsync(mod);
@@ -204,25 +142,25 @@ function DownloadingMods({ mods, bundlesPerCluster, setOpen, nextPath }: { mods:
 		};
 
 		downloadAll();
-	}, [mods, bundlesPerCluster]);
+	}, [mods]);
 
 	useEffect(() => {
-		if (totalItems > 0 && downloadedMods >= totalItems) {
+		if (downloadedMods >= mods.length) {
 			setOpen(false);
 			navigate({ to: nextPath });
 		}
-	}, [downloadedMods, totalItems, navigate, nextPath, setOpen]);
+	}, [downloadedMods, mods, navigate, nextPath, setOpen]);
 
 	return (
 		<Overlay.Dialog isDismissable={false}>
 			<Overlay.Title>Downloading Mods</Overlay.Title>
 
 			<div className="w-full flex flex-col items-center gap-2">
-				<p>Downloaded {downloadedMods} / {totalItems}</p>
+				<p>Downloaded {downloadedMods} / {mods.length}</p>
 				<div className="w-1/2 h-4 bg-component-bg-disabled rounded-full outline-2 outline-ghost-overlay">
 					<div
 						className="h-full bg-brand rounded-full transition-all duration-300"
-						style={{ width: totalItems > 0 ? `${(downloadedMods / totalItems) * 100}%` : '0%' }}
+						style={{ width: mods.length > 0 ? `${(downloadedMods / mods.length) * 100}%` : '0%' }}
 					>
 					</div>
 				</div>
