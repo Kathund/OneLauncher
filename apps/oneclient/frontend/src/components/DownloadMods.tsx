@@ -1,6 +1,5 @@
 import type { ExternalPackage, ManagedVersionDependency, ModpackArchive, ModpackFile, Provider } from '@/bindings.gen';
 import { getModMetaDataName, Overlay } from '@/components';
-import { useSettings } from '@/hooks/useSettings';
 import { bindings } from '@/main';
 import { useCommandMut } from '@onelauncher/common';
 import { Button } from '@onelauncher/common/components';
@@ -135,9 +134,6 @@ function DownloadingMods({ mods, bundlesPerCluster, setOpen, nextPath }: { mods:
 		else { await bindings.core.downloadExternalPackage(mod.package, mod.clusterId, null, null); }
 	});
 
-	const { setting } = useSettings();
-	let useParallelModDownloading = setting('parallel_mod_downloading');
-
 	useEffect(() => {
 		const downloadAll = async () => {
 			let remainingMods = [...mods];
@@ -196,26 +192,15 @@ function DownloadingMods({ mods, bundlesPerCluster, setOpen, nextPath }: { mods:
 				}
 			}
 
-			if (useParallelModDownloading)
-				await downloadModsParallel(remainingMods, 10, async (mod) => {
-					setModName(mod.name);
-					try {
-						await download.mutateAsync(mod);
-					}
-					finally {
-						setDownloadedMods(prev => prev + 1);
-					}
-				});
-			else
-				for (const mod of remainingMods) {
-					setModName(mod.name);
-					try {
-						await download.mutateAsync(mod);
-					}
-					finally {
-						setDownloadedMods(prev => prev + 1);
-					}
+			await downloadModsParallel(remainingMods, 10, async (mod) => {
+				setModName(mod.name);
+				try {
+					await download.mutateAsync(mod);
 				}
+				finally {
+					setDownloadedMods(prev => prev + 1);
+				}
+			});
 		};
 
 		downloadAll();
