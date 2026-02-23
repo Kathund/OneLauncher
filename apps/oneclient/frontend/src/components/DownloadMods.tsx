@@ -1,4 +1,4 @@
-import type { ExternalPackage, ManagedVersionDependency, ModpackFile, Provider } from '@/bindings.gen';
+import type { ExternalPackage, ManagedVersionDependency, ModpackFile, ModpackFileKind, Provider } from '@/bindings.gen';
 import { getModMetaDataName, Overlay } from '@/components';
 import { bindings } from '@/main';
 import { useCommandMut } from '@onelauncher/common';
@@ -15,6 +15,8 @@ export interface BaseModData {
 	name: string;
 	clusterId: number;
 	managed: boolean;
+	bundleName: string | null;
+	fileKind: ModpackFileKind;
 }
 
 export interface ManagedModData extends BaseModData {
@@ -35,7 +37,12 @@ export function isManagedMod(mod: ModData): mod is ManagedModData {
 	return mod.managed === true;
 }
 
-export function DownloadMods({ modsPerCluster, ref }: { modsPerCluster: Record<string, Array<ModpackFile>>; ref: React.Ref<DownloadModsRef> }) {
+export interface ModWithBundle {
+	file: ModpackFile;
+	bundleName: string;
+}
+
+export function DownloadMods({ modsPerCluster, ref }: { modsPerCluster: Record<string, Array<ModWithBundle>>; ref: React.Ref<DownloadModsRef> }) {
 	const navigate = useNavigate();
 	const [isOpen, setOpen] = useState<boolean>(false);
 	const [mods, setMods] = useState<ModDataArray>([]);
@@ -43,14 +50,16 @@ export function DownloadMods({ modsPerCluster, ref }: { modsPerCluster: Record<s
 
 	useEffect(() => {
 		const modsList: ModDataArray = [];
-		for (const [clusterId, mods] of Object.entries(modsPerCluster))
-			for (const mod of mods) {
+		for (const [clusterId, modsWithBundle] of Object.entries(modsPerCluster))
+			for (const { file: mod, bundleName } of modsWithBundle) {
 				if ('External' in mod.kind)
 					modsList.push({
 						name: getModMetaDataName(mod),
 						clusterId: Number(clusterId),
 						managed: false,
 						package: mod.kind.External,
+						bundleName,
+						fileKind: mod.kind,
 					});
 
 				if ('Managed' in mod.kind) {
@@ -63,6 +72,8 @@ export function DownloadMods({ modsPerCluster, ref }: { modsPerCluster: Record<s
 						id: pkg.id,
 						versionId: version.version_id,
 						dependencies: version.dependencies,
+						bundleName,
+						fileKind: mod.kind,
 					});
 				}
 			}
@@ -123,9 +134,30 @@ function DownloadingMods({ mods, setOpen, nextPath }: { mods: ModDataArray; setO
 							await bindings.core.downloadPackage(mod.provider, slug, versions.items[0].version_id, cluster.id, null);
 					}
 				}
-			await bindings.core.downloadPackage(mod.provider, mod.id, mod.versionId, mod.clusterId, true);
+
+			if (mod.bundleName)
+				await bindings.oneclient.downloadPackageFromBundle(
+					mod.fileKind,
+					mod.clusterId,
+					mod.bundleName,
+					true,
+				);
+
+			else
+				await bindings.core.downloadPackage(mod.provider, mod.id, mod.versionId, mod.clusterId, true);
 		}
-		else { await bindings.core.downloadExternalPackage(mod.package, mod.clusterId, null, null); }
+		else {
+			if (mod.bundleName)
+				await bindings.oneclient.downloadPackageFromBundle(
+					mod.fileKind,
+					mod.clusterId,
+					mod.bundleName,
+					true,
+				);
+
+			else
+				await bindings.core.downloadExternalPackage(mod.package, mod.clusterId, null, null);
+		}
 	});
 
 	useEffect(() => {

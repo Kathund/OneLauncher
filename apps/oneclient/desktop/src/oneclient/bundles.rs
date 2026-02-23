@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use onelauncher_core::api::packages::modpack::data::{ModpackArchive, ModpackFileKind};
+use onelauncher_core::api::packages::modpack::data::ModpackArchive;
 use onelauncher_core::api::packages::modpack::{InstallableModpackFormatExt, ModpackFormat};
 use onelauncher_core::entity::loader::GameLoader;
 use onelauncher_core::error::LauncherResult;
