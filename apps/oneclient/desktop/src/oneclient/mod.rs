@@ -33,6 +33,7 @@ async fn check_and_apply_all_bundle_updates() {
 
 	let mut total_updates_applied = 0;
 	let mut total_removals_applied = 0;
+	let mut total_additions_applied = 0;
 	let mut total_clusters_failed = 0;
 
 	for cluster in clusters {
@@ -46,10 +47,12 @@ async fn check_and_apply_all_bundle_updates() {
 			Ok(result) => {
 				let update_count = result.updates_applied.len();
 				let removal_count = result.removals_applied.len();
+				let addition_count = result.additions_applied.len();
 
-				if update_count > 0 || removal_count > 0 {
+				if update_count > 0 || removal_count > 0 || addition_count > 0 {
 					total_updates_applied += update_count;
 					total_removals_applied += removal_count;
+					total_additions_applied += addition_count;
 
 					if update_count > 0 {
 						tracing::info!(
@@ -85,6 +88,27 @@ async fn check_and_apply_all_bundle_updates() {
 							);
 						}
 					}
+
+					if addition_count > 0 {
+						tracing::info!(
+							"installed {} new package(s) from bundles for cluster '{}' (id: {})",
+							addition_count,
+							cluster.name,
+							cluster.id
+						);
+
+						for addition in &result.additions_applied {
+							let file_id = match &addition.new_file.kind {
+								onelauncher_core::api::packages::modpack::data::ModpackFileKind::Managed((pkg, _)) => pkg.id.clone(),
+								onelauncher_core::api::packages::modpack::data::ModpackFileKind::External(ext) => ext.sha1.clone(),
+							};
+							tracing::info!(
+								"  - installed new package '{}' from bundle '{}'",
+								file_id,
+								addition.bundle_name
+							);
+						}
+					}
 				} else {
 					tracing::debug!("no bundle updates needed for cluster '{}'", cluster.name);
 				}
@@ -99,7 +123,7 @@ async fn check_and_apply_all_bundle_updates() {
 		}
 	}
 
-	if total_updates_applied > 0 || total_removals_applied > 0 {
+	if total_updates_applied > 0 || total_removals_applied > 0 || total_additions_applied > 0 {
 		let mut message_parts = Vec::new();
 		if total_updates_applied > 0 {
 			message_parts.push(format!("{} mod(s) updated", total_updates_applied));
@@ -107,11 +131,15 @@ async fn check_and_apply_all_bundle_updates() {
 		if total_removals_applied > 0 {
 			message_parts.push(format!("{} mod(s) removed", total_removals_applied));
 		}
+		if total_additions_applied > 0 {
+			message_parts.push(format!("{} mod(s) added", total_additions_applied));
+		}
 		send_info!("Bundle sync: {}", message_parts.join(", "));
 		tracing::info!(
-			"bundle sync complete: {} updates applied, {} removals applied",
+			"bundle sync complete: {} updates applied, {} removals applied, {} additions applied",
 			total_updates_applied,
-			total_removals_applied
+			total_removals_applied,
+			total_additions_applied
 		);
 	} else if total_clusters_failed == 0 {
 		tracing::info!("all bundle packages are up to date");

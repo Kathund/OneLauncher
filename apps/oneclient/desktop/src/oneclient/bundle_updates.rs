@@ -31,10 +31,18 @@ pub struct BundlePackageRemoval {
 }
 
 #[taurpc::ipc_type]
+pub struct BundlePackageAddition {
+	pub cluster_id: ClusterId,
+	pub bundle_name: String,
+	pub new_file: ModpackFile,
+}
+
+#[taurpc::ipc_type]
 pub struct BundleUpdateCheckResult {
 	pub cluster_id: ClusterId,
 	pub updates_available: Vec<BundlePackageUpdate>,
 	pub removals_available: Vec<BundlePackageRemoval>,
+	pub additions_available: Vec<BundlePackageAddition>,
 	pub checked_at: DateTime<Utc>,
 }
 
@@ -69,13 +77,7 @@ pub async fn check_bundle_updates(
 	);
 
 	if bundle_packages.is_empty() {
-		tracing::debug!(cluster_id = %cluster_id, "No bundle packages found, skipping update check");
-		return Ok(BundleUpdateCheckResult {
-			cluster_id,
-			updates_available: vec![],
-			removals_available: vec![],
-			checked_at: Utc::now(),
-		});
+		tracing::debug!(cluster_id = %cluster_id, "No bundle packages found, checking for new additions only");
 	}
 
 	let bundles = BundlesManager::get()
@@ -217,11 +219,73 @@ pub async fn check_bundle_updates(
 		}
 	}
 
+	let subscribed_bundles: std::collections::HashSet<String> = bundle_packages
+		.iter()
+		.filter_map(|bp| bp.bundle_name.clone())
+		.collect();
+
+	tracing::debug!(
+		cluster_id = %cluster_id,
+		subscribed_bundles = ?subscribed_bundles,
+		"Bundles this cluster is subscribed to"
+	);
+
+	let installed_package_ids: std::collections::HashSet<String> = bundle_packages
+		.iter()
+		.filter_map(|bp| bp.package_id.clone())
+		.collect();
+
+	let installed_external_hashes: std::collections::HashSet<String> = bundle_packages
+		.iter()
+		.filter(|bp| bp.bundle_name.is_some())
+		.map(|bp| bp.package_hash.clone())
+		.collect();
+
+	let mut additions_available = Vec::new();
+	for bundle in &bundles {
+		if !subscribed_bundles.contains(&bundle.manifest.name) {
+			tracing::debug!(
+				bundle_name = %bundle.manifest.name,
+				"Skipping bundle - not subscribed"
+			);
+			continue;
+		}
+
+		for file in &bundle.manifest.files {
+			if !file.enabled {
+				continue;
+			}
+
+			let is_new = match &file.kind {
+				ModpackFileKind::Managed((pkg, _)) => !installed_package_ids.contains(&pkg.id),
+				ModpackFileKind::External(ext) => !installed_external_hashes.contains(&ext.sha1),
+			};
+
+			if is_new {
+				let file_id = match &file.kind {
+					ModpackFileKind::Managed((pkg, _)) => pkg.id.clone(),
+					ModpackFileKind::External(ext) => ext.sha1.clone(),
+				};
+				tracing::info!(
+					bundle_name = %bundle.manifest.name,
+					file_id = %file_id,
+					"New package found in subscribed bundle, marking for addition"
+				);
+				additions_available.push(BundlePackageAddition {
+					cluster_id,
+					bundle_name: bundle.manifest.name.clone(),
+					new_file: file.clone(),
+				});
+			}
+		}
+	}
+
 	tracing::info!(
 		cluster_id = %cluster_id,
 		total_packages_checked = %bundle_packages.len(),
 		updates_found = %updates_available.len(),
 		removals_found = %removals_available.len(),
+		additions_found = %additions_available.len(),
 		skipped_no_package_id = %skipped_no_package_id,
 		skipped_no_version_id = %skipped_no_version_id,
 		not_in_bundle = %not_in_bundle,
@@ -232,6 +296,7 @@ pub async fn check_bundle_updates(
 		cluster_id,
 		updates_available,
 		removals_available,
+		additions_available,
 		checked_at: Utc::now(),
 	})
 }
@@ -470,10 +535,110 @@ async fn apply_single_removal(removal: &BundlePackageRemoval) -> LauncherResult<
 	Ok(())
 }
 
+async fn apply_single_addition(
+	addition: &BundlePackageAddition,
+) -> LauncherResult<onelauncher_core::entity::packages::Model> {
+	let file_id = match &addition.new_file.kind {
+		ModpackFileKind::Managed((pkg, _)) => pkg.id.clone(),
+		ModpackFileKind::External(ext) => ext.sha1.clone(),
+	};
+
+	tracing::info!(
+		cluster_id = %addition.cluster_id,
+		bundle_name = %addition.bundle_name,
+		file_id = %file_id,
+		"Installing new package from bundle"
+	);
+
+	let cluster = api::cluster::dao::get_cluster_by_id(addition.cluster_id)
+		.await?
+		.ok_or_else(|| anyhow::anyhow!("cluster with id {} not found", addition.cluster_id))?;
+
+	match &addition.new_file.kind {
+		ModpackFileKind::Managed((pkg, version)) => {
+			tracing::debug!(
+				package_id = %pkg.id,
+				version_id = %version.version_id,
+				"Downloading new managed package"
+			);
+			let model = api::packages::download_package(pkg, version, None, None).await?;
+
+			tracing::debug!(
+				package_hash = %model.hash,
+				"Linking new package to cluster"
+			);
+			api::packages::link_package(&model, &cluster, Some(true)).await?;
+
+			tracing::debug!(
+				package_hash = %model.hash,
+				bundle_name = %addition.bundle_name,
+				"Tracking new package as bundle package"
+			);
+			api::packages::bundle_dao::track_bundle_package(
+				&cluster,
+				&model,
+				&addition.bundle_name,
+				&version.version_id,
+			)
+			.await?;
+
+			tracing::info!(
+				package_id = %pkg.id,
+				package_hash = %model.hash,
+				"Successfully installed new managed package from bundle"
+			);
+			Ok(model)
+		}
+		ModpackFileKind::External(ext_package) => {
+			tracing::debug!(
+				url = %ext_package.url,
+				sha1 = %ext_package.sha1,
+				"Downloading new external package"
+			);
+			let model = api::packages::download_external_package(
+				ext_package,
+				&cluster,
+				None,
+				Some(true),
+				None,
+			)
+			.await?
+			.ok_or_else(|| anyhow::anyhow!("Failed to download external package"))?;
+
+			tracing::debug!(
+				package_hash = %model.hash,
+				"Linking new external package to cluster"
+			);
+			api::packages::link_package(&model, &cluster, Some(true)).await?;
+
+			tracing::debug!(
+				package_hash = %model.hash,
+				bundle_name = %addition.bundle_name,
+				"Tracking new external package as bundle package"
+			);
+			api::packages::bundle_dao::track_bundle_package(
+				&cluster,
+				&model,
+				&addition.bundle_name,
+				&ext_package.sha1,
+			)
+			.await?;
+
+			tracing::info!(
+				url = %ext_package.url,
+				package_hash = %model.hash,
+				"Successfully installed new external package from bundle"
+			);
+			Ok(model)
+		}
+	}
+}
+
 #[taurpc::ipc_type]
 pub struct ApplyBundleUpdatesResult {
 	pub updates_applied: Vec<BundlePackageUpdate>,
 	pub removals_applied: Vec<BundlePackageRemoval>,
+	pub additions_applied: Vec<BundlePackageAddition>,
 }
 
 pub async fn apply_bundle_updates(
@@ -483,6 +648,7 @@ pub async fn apply_bundle_updates(
 
 	let mut updates_applied = Vec::new();
 	let mut removals_applied = Vec::new();
+	let mut additions_applied = Vec::new();
 
 	for removal in check_result.removals_available {
 		match apply_single_removal(&removal).await {
@@ -510,8 +676,24 @@ pub async fn apply_bundle_updates(
 		}
 	}
 
+	for addition in check_result.additions_available {
+		let file_id = match &addition.new_file.kind {
+			ModpackFileKind::Managed((pkg, _)) => pkg.id.clone(),
+			ModpackFileKind::External(ext) => ext.sha1.clone(),
+		};
+		match apply_single_addition(&addition).await {
+			Ok(_) => {
+				additions_applied.push(addition);
+			}
+			Err(e) => {
+				send_error!("Failed to install new bundle package '{}': {}", file_id, e);
+			}
+		}
+	}
+
 	Ok(ApplyBundleUpdatesResult {
 		updates_applied,
 		removals_applied,
+		additions_applied,
 	})
 }
