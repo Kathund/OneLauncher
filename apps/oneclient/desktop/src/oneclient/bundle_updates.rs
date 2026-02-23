@@ -22,9 +22,19 @@ pub struct BundlePackageUpdate {
 }
 
 #[taurpc::ipc_type]
+pub struct BundlePackageRemoval {
+	pub cluster_id: ClusterId,
+	pub package_hash: String,
+	pub package_id: String,
+	pub bundle_name: String,
+	pub installed_at: DateTime<Utc>,
+}
+
+#[taurpc::ipc_type]
 pub struct BundleUpdateCheckResult {
 	pub cluster_id: ClusterId,
 	pub updates_available: Vec<BundlePackageUpdate>,
+	pub removals_available: Vec<BundlePackageRemoval>,
 	pub checked_at: DateTime<Utc>,
 }
 
@@ -63,6 +73,7 @@ pub async fn check_bundle_updates(
 		return Ok(BundleUpdateCheckResult {
 			cluster_id,
 			updates_available: vec![],
+			removals_available: vec![],
 			checked_at: Utc::now(),
 		});
 	}
@@ -123,6 +134,7 @@ pub async fn check_bundle_updates(
 	);
 
 	let mut updates_available = Vec::new();
+	let mut removals_available = Vec::new();
 	let mut skipped_no_package_id = 0;
 	let mut skipped_no_version_id = 0;
 	let mut not_in_bundle = 0;
@@ -181,12 +193,27 @@ pub async fn check_bundle_updates(
 			}
 		} else {
 			not_in_bundle += 1;
-			tracing::debug!(
-				package_id = %pkg_id,
-				installed_version = %installed_version_id,
-				bundle_name = ?bundle_pkg.bundle_name,
-				"Package not found in any current bundle (may have been removed from bundle)"
-			);
+			if let Some(ref bundle_name) = bundle_pkg.bundle_name {
+				tracing::info!(
+					package_id = %pkg_id,
+					package_hash = %bundle_pkg.package_hash,
+					bundle_name = %bundle_name,
+					"Package no longer in bundle, marking for removal"
+				);
+				removals_available.push(BundlePackageRemoval {
+					cluster_id,
+					package_hash: bundle_pkg.package_hash.clone(),
+					package_id: pkg_id.clone(),
+					bundle_name: bundle_name.clone(),
+					installed_at: bundle_pkg.installed_at.unwrap_or_else(Utc::now),
+				});
+			} else {
+				tracing::debug!(
+					package_id = %pkg_id,
+					package_hash = %bundle_pkg.package_hash,
+					"Package not found in any bundle (no bundle name tracked)"
+				);
+			}
 		}
 	}
 
@@ -194,6 +221,7 @@ pub async fn check_bundle_updates(
 		cluster_id = %cluster_id,
 		total_packages_checked = %bundle_packages.len(),
 		updates_found = %updates_available.len(),
+		removals_found = %removals_available.len(),
 		skipped_no_package_id = %skipped_no_package_id,
 		skipped_no_version_id = %skipped_no_version_id,
 		not_in_bundle = %not_in_bundle,
@@ -203,6 +231,7 @@ pub async fn check_bundle_updates(
 	Ok(BundleUpdateCheckResult {
 		cluster_id,
 		updates_available,
+		removals_available,
 		checked_at: Utc::now(),
 	})
 }
@@ -417,17 +446,63 @@ async fn apply_single_update(
 	}
 }
 
+async fn apply_single_removal(removal: &BundlePackageRemoval) -> LauncherResult<()> {
+	tracing::info!(
+		cluster_id = %removal.cluster_id,
+		package_hash = %removal.package_hash,
+		package_id = %removal.package_id,
+		bundle_name = %removal.bundle_name,
+		"Removing package that was removed from bundle"
+	);
+
+	tracing::debug!(
+		package_hash = %removal.package_hash,
+		"Removing package from cluster"
+	);
+	api::packages::remove_package(removal.cluster_id, removal.package_hash.clone()).await?;
+
+	tracing::info!(
+		package_id = %removal.package_id,
+		package_hash = %removal.package_hash,
+		"Successfully removed package that was removed from bundle"
+	);
+
+	Ok(())
+}
+
+#[taurpc::ipc_type]
+pub struct ApplyBundleUpdatesResult {
+	pub updates_applied: Vec<BundlePackageUpdate>,
+	pub removals_applied: Vec<BundlePackageRemoval>,
+}
+
 pub async fn apply_bundle_updates(
 	cluster_id: ClusterId,
-) -> LauncherResult<Vec<BundlePackageUpdate>> {
+) -> LauncherResult<ApplyBundleUpdatesResult> {
 	let check_result = check_bundle_updates(cluster_id).await?;
 
-	let mut applied_updates = Vec::new();
+	let mut updates_applied = Vec::new();
+	let mut removals_applied = Vec::new();
+
+	for removal in check_result.removals_available {
+		match apply_single_removal(&removal).await {
+			Ok(_) => {
+				removals_applied.push(removal);
+			}
+			Err(e) => {
+				send_error!(
+					"Failed to remove bundle package '{}': {}",
+					removal.package_id,
+					e
+				);
+			}
+		}
+	}
 
 	for update in check_result.updates_available {
 		match apply_single_update(&update).await {
 			Ok(_) => {
-				applied_updates.push(update);
+				updates_applied.push(update);
 			}
 			Err(e) => {
 				send_error!("Failed to update bundle package: {}", e);
@@ -435,5 +510,8 @@ pub async fn apply_bundle_updates(
 		}
 	}
 
-	Ok(applied_updates)
+	Ok(ApplyBundleUpdatesResult {
+		updates_applied,
+		removals_applied,
+	})
 }

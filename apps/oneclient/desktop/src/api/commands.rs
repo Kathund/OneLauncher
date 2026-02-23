@@ -7,7 +7,7 @@ use onelauncher_core::entity::{clusters, packages};
 use onelauncher_core::error::LauncherResult;
 
 use crate::ext::updater::Update;
-use crate::oneclient::bundle_updates::BundlePackageUpdate;
+use crate::oneclient::bundle_updates::ApplyBundleUpdatesResult;
 use crate::oneclient::bundles::BundlesManager;
 use crate::oneclient::clusters::{OnlineClusterManifest, get_data_storage_versions};
 use tauri::{AppHandle, Runtime};
@@ -42,7 +42,7 @@ pub trait OneClientApi {
 	#[taurpc(alias = "updateBundlePackages")]
 	async fn update_bundle_packages(
 		cluster_id: ClusterId,
-	) -> LauncherResult<Vec<BundlePackageUpdate>>;
+	) -> LauncherResult<ApplyBundleUpdatesResult>;
 }
 
 #[taurpc::ipc_type]
@@ -165,7 +165,7 @@ impl OneClientApi for OneClientApiImpl {
 	async fn update_bundle_packages(
 		self,
 		cluster_id: ClusterId,
-	) -> LauncherResult<Vec<BundlePackageUpdate>> {
+	) -> LauncherResult<ApplyBundleUpdatesResult> {
 		crate::oneclient::bundle_updates::apply_bundle_updates(cluster_id).await
 	}
 }

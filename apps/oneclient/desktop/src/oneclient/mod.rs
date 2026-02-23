@@ -32,7 +32,8 @@ async fn check_and_apply_all_bundle_updates() {
 	};
 
 	let mut total_updates_applied = 0;
-	let mut total_updates_failed = 0;
+	let mut total_removals_applied = 0;
+	let mut total_clusters_failed = 0;
 
 	for cluster in clusters {
 		tracing::debug!(
@@ -42,32 +43,54 @@ async fn check_and_apply_all_bundle_updates() {
 		);
 
 		match bundle_updates::apply_bundle_updates(cluster.id).await {
-			Ok(applied_updates) => {
-				if !applied_updates.is_empty() {
-					let update_count = applied_updates.len();
+			Ok(result) => {
+				let update_count = result.updates_applied.len();
+				let removal_count = result.removals_applied.len();
+
+				if update_count > 0 || removal_count > 0 {
 					total_updates_applied += update_count;
+					total_removals_applied += removal_count;
 
-					tracing::info!(
-						"applied {} bundle update(s) for cluster '{}' (id: {})",
-						update_count,
-						cluster.name,
-						cluster.id
-					);
-
-					for update in &applied_updates {
+					if update_count > 0 {
 						tracing::info!(
-							"  - updated package from bundle '{}': {} -> {}",
-							update.bundle_name,
-							update.installed_version_id,
-							update.new_version_id
+							"applied {} bundle update(s) for cluster '{}' (id: {})",
+							update_count,
+							cluster.name,
+							cluster.id
 						);
+
+						for update in &result.updates_applied {
+							tracing::info!(
+								"  - updated package from bundle '{}': {} -> {}",
+								update.bundle_name,
+								update.installed_version_id,
+								update.new_version_id
+							);
+						}
+					}
+
+					if removal_count > 0 {
+						tracing::info!(
+							"removed {} package(s) no longer in bundles for cluster '{}' (id: {})",
+							removal_count,
+							cluster.name,
+							cluster.id
+						);
+
+						for removal in &result.removals_applied {
+							tracing::info!(
+								"  - removed package '{}' (was from bundle '{}')",
+								removal.package_id,
+								removal.bundle_name
+							);
+						}
 					}
 				} else {
 					tracing::debug!("no bundle updates needed for cluster '{}'", cluster.name);
 				}
 			}
 			Err(err) => {
-				total_updates_failed += 1;
+				total_clusters_failed += 1;
 				tracing::warn!(
 					"failed to apply bundle updates for cluster '{}': {err}",
 					cluster.name
@@ -76,17 +99,25 @@ async fn check_and_apply_all_bundle_updates() {
 		}
 	}
 
-	if total_updates_applied > 0 {
-		send_info!(
-			"Bundle updates applied: {} mod(s) updated from bundles",
-			total_updates_applied
+	if total_updates_applied > 0 || total_removals_applied > 0 {
+		let mut message_parts = Vec::new();
+		if total_updates_applied > 0 {
+			message_parts.push(format!("{} mod(s) updated", total_updates_applied));
+		}
+		if total_removals_applied > 0 {
+			message_parts.push(format!("{} mod(s) removed", total_removals_applied));
+		}
+		send_info!("Bundle sync: {}", message_parts.join(", "));
+		tracing::info!(
+			"bundle sync complete: {} updates applied, {} removals applied",
+			total_updates_applied,
+			total_removals_applied
 		);
-		tracing::info!("total bundle updates applied: {total_updates_applied}");
-	} else if total_updates_failed == 0 {
+	} else if total_clusters_failed == 0 {
 		tracing::info!("all bundle packages are up to date");
 	}
 
-	if total_updates_failed > 0 {
-		tracing::warn!("failed to apply updates for {total_updates_failed} cluster(s)");
+	if total_clusters_failed > 0 {
+		tracing::warn!("failed to apply updates for {total_clusters_failed} cluster(s)");
 	}
 }
