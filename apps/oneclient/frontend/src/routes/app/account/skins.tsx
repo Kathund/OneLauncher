@@ -1,22 +1,21 @@
 import type { PlayerAnimation } from 'skinview3d';
-import { ImportSkinModal, Overlay, RemoveSkinCapeModal, SheetPage, SkinViewer } from '@/components';
+import { DefaultRoation, Overlay, SettingDropdown, SettingSwitch, SheetPage, SkinViewer } from '@/components';
 import { bindings } from '@/main';
 import { getSkinUrl } from '@/utils/minecraft';
 import { useToast } from '@/utils/toast';
-import { Button } from '@onelauncher/common/components';
+import { Button, TextField, Tooltip, WingsFilledIcon, WingsIcon } from '@onelauncher/common/components';
 import { createFileRoute } from '@tanstack/react-router';
 import { dataDir, downloadDir, join } from '@tauri-apps/api/path';
 import { save } from '@tauri-apps/plugin-dialog';
 import { exists, mkdir, readTextFile, writeFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { Download01Icon, PlusIcon, Trash01Icon } from '@untitled-theme/icons-react';
+import { Download01Icon, PauseSquareIcon, PlaySquareIcon, PlusIcon, Trash01Icon } from '@untitled-theme/icons-react';
 import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { CrouchAnimation, FlyingAnimation, HitAnimation, IdleAnimation, WalkingAnimation } from 'skinview3d';
 
 interface Skin {
-	is_slim: boolean;
-	skin_url: string;
-	cape_url?: string;
+	slim: boolean | null;
+	url: string;
 }
 
 interface Cape {
@@ -27,6 +26,61 @@ interface Cape {
 export const Route = createFileRoute('/app/account/skins')({
 	component: RouteComponent,
 });
+
+interface Animation {
+	name: string;
+	animation: PlayerAnimation;
+	speed: number;
+}
+
+const animations: Array<Animation> = [
+	{ name: 'Idle', animation: new IdleAnimation(), speed: 0.1 },
+	{ name: 'Walking', animation: new WalkingAnimation(), speed: 0.2 },
+	{ name: 'Flying', animation: new FlyingAnimation(), speed: 0.2 },
+	{ name: 'Crouch', animation: new CrouchAnimation(), speed: 0.025 },
+	{ name: 'Hit', animation: new HitAnimation(), speed: 0.2 },
+];
+
+interface SkinHistoryApi {
+	skins: Array<Skin>;
+	addSkin: (newSkin: Skin) => void;
+	removeSkin: (newSkin: Skin) => void;
+}
+
+interface SkinRenderApi extends SkinHistoryApi {
+	skin: Skin;
+	slim: boolean;
+	setSlim: React.Dispatch<React.SetStateAction<boolean>>;
+	setSkin: React.Dispatch<React.SetStateAction<Skin>>;
+	capes: Array<Cape>;
+	cape: Cape;
+	setCape: React.Dispatch<React.SetStateAction<Cape>>;
+	animation?: PlayerAnimation;
+	animationPlaying?: boolean;
+	shouldShowElytra?: boolean;
+}
+
+const SkinRenderContext = createContext<SkinRenderApi | undefined>(undefined);
+function useSkinRenderContext() {
+	const ctx = useContext(SkinRenderContext);
+
+	if (!ctx)
+		throw new Error('useSkinRenderContext must be used within a SkinRenderContext.Provider');
+
+	return ctx;
+}
+
+export function MissingAccountData({ validSearch }: { validSearch: boolean }) {
+	return (
+		<SheetPage headerLarge={<></>} headerSmall={<></>}>
+			<h1>
+				{validSearch
+					? 'Please select an account before going to the skins page'
+					: 'Missing Profile auth. Please log out and log back in'}
+			</h1>
+		</SheetPage>
+	);
+}
 
 async function getSkinHistory(): Promise<Array<Skin>> {
 	const parentDir = await join(await dataDir(), 'OneClient', 'metadata', 'history');
@@ -64,220 +118,264 @@ async function saveSkinHistory(skins: Array<Skin>): Promise<void> {
 	}
 }
 
-const animations = [
-	{ name: 'Idle', animation: new IdleAnimation(), speed: 0.1 },
-	{ name: 'Walking', animation: new WalkingAnimation(), speed: 0.1 },
-	{ name: 'Flying', animation: new FlyingAnimation(), speed: 0.2 },
-	{ name: 'Crouch', animation: new CrouchAnimation(), speed: 0.025 },
-	{ name: 'Hit', animation: new HitAnimation(), speed: 0.1 },
-];
-
-function useSkinHistory() {
-	const [skins, setSkinsState] = useState<Array<Skin>>([]);
+function useSkinHistory(): SkinHistoryApi {
+	const [skins, setSkins] = useState<Array<Skin>>([]);
 	const [loaded, setLoaded] = useState(false);
+	const pendingSkinsRef = useRef<Array<Skin>>([]);
+
 	useEffect(() => {
-		(async () => {
+		async function loadHistory() {
 			const history = await getSkinHistory();
-			setSkinsState(history);
+			const merged = [...pendingSkinsRef.current, ...history].filter(
+				(skin, index, array) => array.findIndex(x => x.url === skin.url) === index,
+			);
+			setSkins(merged);
+			await saveSkinHistory(merged);
+
+			pendingSkinsRef.current = [];
 			setLoaded(true);
-		})();
+		}
+		loadHistory();
 	}, []);
-	const setSkins = (updater: (prev: Array<Skin>) => Array<Skin>) => {
-		setSkinsState((prev) => {
-			const newSkins = updater(prev);
-			const dedupedSkins: Array<Skin> = [];
-			const seen: Set<string> = new Set();
-			for (const skin of newSkins)
-				if (!seen.has(skin.skin_url)) {
-					seen.add(skin.skin_url);
-					dedupedSkins.push(skin);
-				}
 
-			saveSkinHistory(dedupedSkins);
-			return dedupedSkins;
-		});
-	};
+	const addSkin = useCallback(
+		(newSkin: Skin) => {
+			if (!loaded) {
+				pendingSkinsRef.current.push(newSkin);
+				return;
+			}
 
-	return [skins, setSkins, loaded] as const;
-}
+			setSkins((prevSkins) => {
+				const exists = prevSkins.some(s => s.url === newSkin.url);
+				if (exists)
+					return prevSkins;
 
-export function MissingAccountData({ validSearch }: { validSearch: boolean }) {
-	return (
-		<SheetPage headerLarge={<></>} headerSmall={<></>}>
-			<h1>{validSearch ? 'Please select an account before going to the skins page' : 'Missing Profile auth. Please log out and log back in'}</h1>
-		</SheetPage>
+				const updatedSkins = [newSkin, ...prevSkins];
+				saveSkinHistory(updatedSkins).catch(console.error);
+				return updatedSkins;
+			});
+		},
+		[loaded],
 	);
+
+	const removeSkin = useCallback((skin: Skin) => {
+		setSkins((prevSkins) => {
+			const updatedSkins = prevSkins.filter(s => s.url !== skin.url);
+			saveSkinHistory(updatedSkins).catch(console.error);
+			return updatedSkins;
+		});
+	}, []);
+
+	return {
+		skins,
+		addSkin,
+		removeSkin,
+	};
 }
 
 function RouteComponent() {
-	const { profileData, profile, queryClient, validSearch, playerData } = Route.useRouteContext();
-	const toast = useToast();
+	const { profileData, validSearch, playerData } = Route.useRouteContext();
 
-	const [capes, setCapes] = useState<Array<Cape>>([]);
-	const [selectedCape, setSelectedCape] = useState<string>('');
 	const [shouldShowElytra, setShouldShowElytra] = useState<boolean>(false);
+	const [animationPlaying, setAnimationPlaying] = useState<boolean>(true);
+	const [animation, setAnimation] = useState<Animation>(() => animations[0]);
+	const selectAnimationDropDown = (value: string) => {
+		const foundAnimation = animations.find(animation => animation.name === value) ?? animations[0];
+		if (foundAnimation.name === 'Walking')
+			(foundAnimation.animation as WalkingAnimation).headBobbing = false;
+		foundAnimation.animation.speed = foundAnimation.speed;
+		setAnimation(foundAnimation);
+	};
 
-	useEffect(() => {
+	const [cape, setCape] = useState<Cape>({ url: '', id: '' });
+	const capes = useMemo<Array<Cape>>(() => {
 		if (!profileData)
-			return;
-		setCapes([{ url: '', id: '' }, ...profileData.capes.map(cape => ({ url: cape.url, id: cape.id }))]);
+			return [{ url: '', id: '' }];
+
+		return [{ url: '', id: '' }, ...profileData.capes.map(cape => ({ url: cape.url, id: cape.id }))];
 	}, [profileData]);
 
-	const [skins, setSkins, loaded] = useSkinHistory();
-	const [selectedSkin, setSelectedSkin] = useState<Skin>({ skin_url: getSkinUrl(null), is_slim: false });
-	const skinData: Skin = useMemo(() => ({ is_slim: profileData?.skins[0].variant === 'slim', skin_url: getSkinUrl(profileData?.skins[0].url), cape_url: playerData?.cape_url ?? '' }), [playerData?.cape_url, profileData?.skins]);
+	const { skins, addSkin, removeSkin } = useSkinHistory();
+
+	const [skin, setSkin] = useState<Skin>(() => ({
+		slim: profileData?.skins[0].variant === 'slim',
+		url: getSkinUrl(profileData?.skins[0].url),
+	}));
 
 	useEffect(() => {
-		if (!loaded)
-			return;
-
-		setSkins(prev => [...prev, skinData]);
-		setSelectedSkin(skinData);
-		setSelectedCape(skinData.cape_url ?? '');
-	}, [loaded, setSkins, skinData]);
-
-	const importFromURL = (url: string) => {
-		setSkins(prev => [...prev, { is_slim: false, skin_url: url }]);
-	};
-
-	const importFromUsername = async (username: string) => {
-		toast({
-			type: 'info',
-			title: 'Import Skin',
-			message: `Importing skin from ${username}`,
-		});
-		const { id } = await bindings.core.convertUsernameUUID(username);
-		if (id === '')
-			return toast({
-				type: 'error',
-				title: 'Import Skin',
-				message: `${username} doesn't exist`,
-			});
-		const playerProfile = await bindings.core.fetchMinecraftProfile(id);
-		if (playerProfile.skin_url) {
-			setSkins(prev => [...prev, { is_slim: playerProfile.is_slim, skin_url: getSkinUrl(playerProfile.skin_url) }]);
-			toast({
-				type: 'success',
-				title: 'Import Skin',
-				message: `Imported skin from ${username}`,
-			});
+		if (profileData?.skins[0]) {
+			const newSkin = {
+				slim: profileData.skins[0].variant === 'slim',
+				url: getSkinUrl(profileData.skins[0].url),
+			};
+			setSkin(newSkin);
+			addSkin(newSkin);
 		}
-	};
 
-	const saveSkinToAccount = async () => {
-		try {
-			if (!profile)
-				return;
-			await bindings.core.changeSkin(profile.access_token, selectedSkin.skin_url, selectedSkin.is_slim ? 'slim' : 'classic');
-			if (selectedCape === '') {
-				await bindings.core.removeCape(profile.access_token);
-			}
-			else {
-				const capeData = capes.find(cape => cape.url === selectedCape);
-				if (!capeData)
-					return;
-				await bindings.core.changeCape(profile.access_token, capeData.id);
-			}
-			queryClient.invalidateQueries({
-				queryKey: ['getDefaultUser'],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ['fetchLoggedInProfile'],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ['fetchMinecraftProfile'],
-			});
+		if (playerData?.cape_url) {
+			const foundCape = capes.find(cape => cape.url === playerData.cape_url);
+			if (foundCape)
+				setCape(foundCape);
 		}
-		catch (error) {
-			console.error(error);
-		}
-	};
+	}, [profileData?.skins, addSkin, playerData?.cape_url, capes]);
+	const [slim, setSlim] = useState<boolean>(skin.slim ?? false);
 
-	animations[0].animation.speed = animations[0].speed;
-	const [animation, setAnimation] = useState<PlayerAnimation>(animations[0].animation);
-	const [animationName, setAnimationName] = useState<string>(animations[0].name);
-
-	const getNextAnimationData = () => {
-		const animationIndex = animations.findIndex(animationData => animationData.name === animationName);
-		if (animationIndex === -1 || animationIndex === animations.length - 1)
-			return animations[0];
-		else
-			return animations[animationIndex + 1];
-	};
-
-	const changeSelectedAnimation = () => {
-		const data = getNextAnimationData();
-		data.animation.speed = data.speed;
-		if (data.name === 'Walking')
-			(data.animation as WalkingAnimation).headBobbing = false;
-		setAnimation(data.animation);
-		setAnimationName(data.name);
-	};
+	const context = useMemo<SkinRenderApi>(
+		() => ({
+			skins,
+			slim,
+			setSlim,
+			addSkin,
+			removeSkin,
+			skin,
+			setSkin,
+			capes,
+			cape,
+			setCape,
+			shouldShowElytra,
+			animation: animation.animation,
+			animationPlaying,
+		}),
+		[skins, slim, setSlim, addSkin, removeSkin, skin, capes, cape, shouldShowElytra, animation, animationPlaying],
+	);
 
 	if (profileData === null)
 		return <MissingAccountData validSearch={validSearch} />;
 
 	return (
-		<SheetPage
-			headerLarge={(
-				<HeaderLarge save={saveSkinToAccount} username={profileData.username || 'UNKNOWN'} />
-			)}
-			headerSmall={<HeaderSmall />}
-		>
-			<SheetPage.Content>
-				<div className="flex-1 flex flex-row gap-8">
-					<div className="flex flex-col justify-center items-center">
-						<p>Current Skin</p>
-						<Button className="mt-2" color="ghost" onClick={changeSelectedAnimation}>
-							<p>Change to {`${getNextAnimationData().name} Animation`}</p>
-						</Button>
+		<SkinRenderContext.Provider value={context}>
+			<SheetPage headerLarge={<HeaderLarge />} headerSmall={<HeaderLarge />}>
+				<SheetPage.Content>
+					<div className="flex-1 flex flex-row gap-8">
+						<div className="flex flex-col justify-center items-center">
+							<div className="flex flex-col justify-center items-center gap-2">
+								<p>Current Skin</p>
+								<SettingDropdown
+									options={animations.map(animation => ({
+										key: animation.name,
+										label: `${animation.name} Animation`,
+									}))}
+									setting={[animation.name, selectAnimationDropDown]}
+								/>
+							</div>
 
-						<Viewer
-							animation={animation}
-							capeURL={selectedCape}
-							enableControls
-							shouldShowElytra={shouldShowElytra}
-							skinURL={selectedSkin.skin_url}
-						/>
+							<div className="relative">
+								<Viewer cape={cape} enableControls skin={skin} />
+
+								<div className="absolute bottom-4 left-0 w-full">
+									<div className="flex flex-row justify-between items-center">
+										<Tooltip text={`${shouldShowElytra ? 'Hide' : 'Show'} Elytra`}>
+											<Button
+												className="w-12 h-12"
+												color="ghost"
+												onPress={() => setShouldShowElytra(prev => !prev)}
+												size="icon"
+											>
+												{shouldShowElytra ? <WingsFilledIcon className="w-8 h-8" /> : <WingsIcon className="w-8 h-8" />}
+											</Button>
+										</Tooltip>
+
+										<div className="flex flex-row items-center gap-2">
+											<p>Slim</p>
+											<SettingSwitch setting={[slim, (value: boolean) => setSlim(value)]} />
+										</div>
+
+										<Tooltip text={`${animationPlaying ? 'Pause' : 'Play'} Animation`}>
+											<Button
+												className="w-12 h-12"
+												color="ghost"
+												onPress={() => setAnimationPlaying(prev => !prev)}
+												size="icon"
+											>
+												{animationPlaying
+													? <PauseSquareIcon className="w-8 h-8" />
+													: <PlaySquareIcon className="w-8 h-8" />}
+											</Button>
+										</Tooltip>
+									</div>
+								</div>
+							</div>
+						</div>
+
+						<div className="min-h-full w-px bg-component-border"></div>
+
+						<div className="w-full flex flex-col min-h-full justify-between overflow-hidden">
+							<Skins />
+							<div className="min-w-full h-px bg-component-border"></div>
+							<div className="min-w-full h-px bg-component-border"></div>
+							<Capes />
+						</div>
 					</div>
-
-					<div className="min-h-full w-px bg-component-border"></div>
-
-					<div className="w-full flex flex-col min-h-full justify-between overflow-hidden">
-
-						<SkinHistoryRow
-							animation={animation}
-							capeURL={selectedCape}
-							importFromURL={importFromURL}
-							importFromUsername={importFromUsername}
-							selected={selectedSkin}
-							setSelectedSkin={setSelectedSkin}
-							setSkins={setSkins}
-							shouldShowElytra={shouldShowElytra}
-							skins={skins}
-						/>
-
-						<div className="min-w-full h-px bg-component-border"></div>
-
-						<CapeRow
-							animation={animation}
-							capes={capes}
-							selected={selectedCape}
-							setSelectedCape={setSelectedCape}
-							setShouldShowElytra={() => setShouldShowElytra(!shouldShowElytra)}
-							shouldShowElytra={shouldShowElytra}
-							skinURL={selectedSkin.skin_url}
-						/>
-
-					</div>
-
-				</div>
-			</SheetPage.Content>
-		</SheetPage>
+				</SheetPage.Content>
+			</SheetPage>
+		</SkinRenderContext.Provider>
 	);
 }
 
-function SkinHistoryRow({ selected, animation, setSelectedSkin, skins, setSkins, importFromURL, importFromUsername, capeURL, shouldShowElytra }: { selected: Skin; animation: PlayerAnimation; setSelectedSkin: (skin: Skin) => void; skins: Array<Skin>; setSkins: (updater: (prev: Array<Skin>) => Array<Skin>) => void; importFromURL: (url: string) => void; importFromUsername: (username: string) => void; capeURL: string; shouldShowElytra: boolean }) {
+function ImportSkinModal() {
+	const { setSkin, skins, addSkin, setSlim } = useSkinRenderContext();
+	const toast = useToast();
+	const [input, setInput] = useState<string>('');
+
+	const importFromUsername = async () => {
+		toast({ type: 'info', title: 'Import Skin', message: `Importing skin from ${input}` });
+		const { id } = await bindings.core.convertUsernameUUID(input);
+		if (id === '')
+			return toast({ type: 'error', title: 'Import Skin', message: `${input} doesn't exist` });
+		const playerProfile = await bindings.core.fetchMinecraftProfile(id);
+		if (playerProfile.skin_url) {
+			const skin: Skin = { slim: playerProfile.is_slim, url: getSkinUrl(playerProfile.skin_url) };
+			if (skins.includes(skin))
+				return toast({ type: 'error', title: 'Import Skin', message: 'Skin already exists' });
+
+			addSkin(skin);
+			setSkin(skin);
+			setSlim(skin.slim ?? false);
+			toast({ type: 'success', title: 'Import Skin', message: `Imported skin from ${input}` });
+		}
+	};
+
+	const importFromURL = () => {
+		const skin: Skin = { slim: null, url: getSkinUrl(input) };
+		if (skins.includes(skin))
+			return toast({ type: 'error', title: 'Import Skin', message: 'Skin already exists' });
+
+		addSkin(skin);
+		setSkin(skin);
+		toast({ type: 'success', title: 'Import Skin', message: 'Imported skin' });
+	};
+
+	return (
+		<Overlay.Dialog>
+			<Overlay.Title>Import</Overlay.Title>
+			<TextField className="w-full" onChange={e => setInput(e.target.value)} />
+
+			<div className="flex flex-row gap-4 h-1/2 w-full">
+				<Button
+					className="w-1/2"
+					color="primary"
+					onPress={importFromUsername}
+					size="normal"
+					slot="close"
+				>
+					From Username
+				</Button>
+				<Button
+					className="w-1/2"
+					color="primary"
+					onPress={importFromURL}
+					size="normal"
+					slot="close"
+				>
+					From URL
+				</Button>
+			</div>
+		</Overlay.Dialog>
+	);
+}
+
+function Skins() {
+	const { skin: currentSkin, skins, setSkin, setSlim } = useSkinRenderContext();
 	return (
 		<div className="flex flex-col h-full justify-around w-10/12">
 			<div className="flex flex-col justify-center items-center">
@@ -286,26 +384,33 @@ function SkinHistoryRow({ selected, animation, setSelectedSkin, skins, setSkins,
 
 			<OverlayScrollbarsComponent>
 				<div className="flex flex-row h-fit gap-2">
-					<Overlay.Trigger>
-						<Button className="border border-component-border rounded-xl bg-component-border w-[75px] h-[120px]" color="ghost">
-							<div className="flex flex-col justify-center items-center content-center h-full">
-								<PlusIcon className="scale-200" />
-							</div>
-						</Button>
-						<Overlay>
-							<ImportSkinModal importFromURL={importFromURL} importFromUsername={importFromUsername} />
-						</Overlay>
-					</Overlay.Trigger>
-					{skins.map(skinData => (
-						<RenderSkin
-							animation={animation}
-							capeURL={capeURL}
-							key={skinData.skin_url}
-							selected={selected}
-							setSelectedSkin={setSelectedSkin}
-							setSkins={setSkins}
-							shouldShowElytra={shouldShowElytra}
-							skin={skinData}
+					<Tooltip text="Add Skin">
+						<Overlay.Trigger>
+							<Button
+								className="w-[75px] h-[120px] border rounded-xl bg-component-border hover:border-brand border-component-border"
+								color="ghost"
+							>
+								<div className="flex flex-col justify-center items-center content-center h-full">
+									<PlusIcon className="scale-200" />
+								</div>
+							</Button>
+							<Overlay>
+								<ImportSkinModal />
+							</Overlay>
+						</Overlay.Trigger>
+					</Tooltip>
+					{skins.map(skin => (
+						<TinySkin
+							allowRemoveal={currentSkin.url !== skin.url}
+							key={skin.url}
+							onPress={({ skin }: TinySkinOnPressProps) => {
+								if (skin) {
+									setSkin(skin);
+									setSlim(skin.slim ?? false);
+								}
+							}}
+							selected={currentSkin.url === skin.url}
+							skin={skin}
 						/>
 					))}
 					<div className="w-4 shrink-0" />
@@ -315,90 +420,22 @@ function SkinHistoryRow({ selected, animation, setSelectedSkin, skins, setSkins,
 	);
 }
 
-function RenderSkin({ skin, selected, animation, setSelectedSkin, setSkins, capeURL, shouldShowElytra }: { skin: Skin; selected: Skin; animation: PlayerAnimation; setSelectedSkin: (skin: Skin) => void; setSkins: (updater: (prev: Array<Skin>) => Array<Skin>) => void; capeURL: string; shouldShowElytra: boolean }) {
-	const exportSkin = async () => {
-		try {
-			if (!skin.skin_url)
-				return;
-			const filePath = await save({
-				title: 'Skin Export Location',
-				filters: [
-					{
-						name: 'Images',
-						extensions: ['png'],
-					},
-				],
-				defaultPath: await join(await downloadDir(), `${skin.skin_url.split('/').reverse()[0]}.png`),
-			});
-
-			if (!filePath)
-				return;
-
-			const response = await fetch(skin.skin_url);
-			const buffer = await response.arrayBuffer();
-
-			await writeFile(filePath, new Uint8Array(buffer));
-		}
-		catch (error) {
-			console.error(error);
-		}
-	};
-	if (!skin.skin_url)
-		return <></>;
-	return (
-		<Button
-			className={`w-[75px] h-[120px] relative border rounded-xl bg-component-border ${selected.skin_url === skin.skin_url ? 'border-brand' : 'hover:border-brand border-component-border'}`}
-			color="ghost"
-			onClick={() => setSelectedSkin(skin)}
-		>
-			<Viewer
-				animation={animation}
-				capeURL={capeURL}
-				height={120}
-				shouldShowElytra={shouldShowElytra}
-				showText={false}
-				skinURL={skin.skin_url}
-				width={75}
-			/>
-			{selected.skin_url === skin.skin_url
-				? <></>
-				: (
-						<Overlay.Trigger>
-							<Button className="group w-8 h-8 absolute top-0 right-0" color="ghost" size="icon">
-								<Trash01Icon className="group-hover:stroke-danger" />
-							</Button>
-
-							<Overlay>
-								<RemoveSkinCapeModal onPress={() => setSkins(prev => prev.filter(skinData => skinData.skin_url !== skin.skin_url))} />
-							</Overlay>
-						</Overlay.Trigger>
-					)}
-			<Button
-				className="group w-8 h-8 absolute bottom-0 right-0"
-				color="ghost"
-				onPress={exportSkin}
-				size="icon"
-			>
-				<Download01Icon className="group-hover:stroke-brand" />
-			</Button>
-		</Button>
-	);
-}
-
-function CapeRow({ selected, animation, setSelectedCape, capes, shouldShowElytra, setShouldShowElytra, skinURL }: { selected: string | null; animation: PlayerAnimation; setSelectedCape: (cape: string) => void; capes: Array<Cape>; shouldShowElytra: boolean; setShouldShowElytra: () => void; skinURL: string }) {
+function Capes() {
+	const { cape: currentCape, capes, setCape } = useSkinRenderContext();
 	return (
 		<div className="flex flex-col h-full justify-around w-10/12">
-			<OverlayScrollbarsComponent className="pr-4">
-				<div className="flex flex-row h-fit gap-2 mr-4 pr-4">
+			<OverlayScrollbarsComponent>
+				<div className="flex flex-row h-fit gap-2">
 					{capes.map(cape => (
-						<RenderCape
-							animation={animation}
-							cape={cape.url}
+						<TinySkin
+							cape={cape}
+							flip
 							key={cape.id}
-							selected={selected}
-							setSelectedCape={setSelectedCape}
-							shouldShowElytra={shouldShowElytra}
-							skinURL={skinURL}
+							onPress={({ cape }: TinySkinOnPressProps) => {
+								if (cape)
+									setCape(cape);
+							}}
+							selected={currentCape.id === cape.id}
 						/>
 					))}
 					<div className="w-4 shrink-0" />
@@ -406,67 +443,197 @@ function CapeRow({ selected, animation, setSelectedCape, capes, shouldShowElytra
 			</OverlayScrollbarsComponent>
 
 			<div className="flex flex-col justify-center items-center">
-				<p>Cape History</p>
-				<Button color="ghost" onClick={setShouldShowElytra}>
-					<p>{`${shouldShowElytra ? 'Disable' : 'Enable'} Elytra`}</p>
-				</Button>
+				<p>Capes</p>
 			</div>
 		</div>
 	);
 }
 
-function RenderCape({ selected, animation, setSelectedCape, cape, shouldShowElytra, skinURL }: { selected: string | null; animation: PlayerAnimation; setSelectedCape: (cape: string) => void; cape: string; shouldShowElytra: boolean; skinURL: string }) {
+function RemoveSkinCapeModal({ skin }: { skin: Skin }) {
+	const { removeSkin } = useSkinRenderContext();
+	return (
+		<Overlay.Dialog>
+			<Overlay.Title>Are you sure?</Overlay.Title>
+
+			<p>This cannot be undone</p>
+
+			<Button
+				className="w-full"
+				color="danger"
+				onPress={() => removeSkin(skin)}
+				size="large"
+				slot="close"
+			>
+				Remove
+			</Button>
+		</Overlay.Dialog>
+	);
+}
+
+interface TinySkinOnPressProps {
+	skin?: Skin;
+	cape?: Cape;
+}
+
+interface TinySkinProps extends TinySkinOnPressProps {
+	selected?: boolean;
+	flip?: boolean;
+	onPress?: ({ skin, cape }: TinySkinOnPressProps) => void;
+	allowRemoveal?: boolean;
+}
+function TinySkin({ skin, cape, flip, selected = false, onPress, allowRemoveal = false }: TinySkinProps) {
+	const onAction = () => {
+		if (onPress !== undefined)
+			onPress({ skin, cape });
+	};
+
+	const exportSkin = async () => {
+		try {
+			if (skin === undefined)
+				return;
+
+			const filePath = await save({
+				title: 'Skin Export Location',
+				filters: [{ name: 'Images', extensions: ['png'] }],
+				defaultPath: await join(await downloadDir(), `${skin.url.split('/').reverse()[0]}.png`),
+			});
+
+			if (!filePath)
+				return;
+
+			const response = await fetch(skin.url);
+			const buffer = await response.arrayBuffer();
+			await writeFile(filePath, new Uint8Array(buffer));
+		}
+		catch (error) {
+			console.error(error);
+		}
+	};
+
 	return (
 		<Button
-			className={`w-[75px] h-[120px] relative border rounded-xl bg-component-border ${selected === cape ? 'border-brand' : 'hover:border-brand border-component-border'}`}
+			className={`w-[75px] h-[120px] relative border rounded-xl bg-component-border ${selected ? 'border-brand' : 'hover:border-brand border-component-border'}`}
 			color="ghost"
-			onClick={() => setSelectedCape(cape)}
+			onPress={onAction}
 		>
 			<Viewer
-				animation={animation}
-				capeURL={cape}
-				flip
+				cape={cape}
+				flip={flip}
 				height={120}
-				shouldShowElytra={shouldShowElytra}
 				showText={false}
-				skinURL={skinURL}
+				skin={skin}
+				slim={skin?.slim}
 				width={75}
 			/>
+			{skin && (
+				<Tooltip text="Export Skin">
+					<Button
+						className="group w-8 h-8 absolute bottom-0 left-0"
+						color="ghost"
+						onPress={exportSkin}
+						size="icon"
+					>
+						<Download01Icon className="group-hover:stroke-brand" />
+					</Button>
+				</Tooltip>
+			)}
+			{skin && allowRemoveal && (
+				<Tooltip text="Remove Skin">
+					<Overlay.Trigger>
+						<Button className="group w-8 h-8 absolute bottom-0 right-0" color="ghost" size="icon">
+							<Trash01Icon className="group-hover:stroke-danger" />
+						</Button>
+
+						<Overlay>
+							<RemoveSkinCapeModal skin={skin} />
+						</Overlay>
+					</Overlay.Trigger>
+				</Tooltip>
+			)}
 		</Button>
 	);
 }
 
-function HeaderLarge({ username, save }: { username: string; save: () => void }) {
+function HeaderLarge() {
+	const toast = useToast();
+	const { profileData, profile, queryClient } = Route.useRouteContext();
+	const { skin, cape } = useSkinRenderContext();
+
+	const save = async () => {
+		try {
+			if (!profile)
+				return;
+			await bindings.core.changeSkin(profile.access_token, skin.url, skin.slim ? 'slim' : 'classic');
+			if (cape.id === '')
+				await bindings.core.removeCape(profile.access_token);
+			else await bindings.core.changeCape(profile.access_token, cape.id);
+
+			queryClient.invalidateQueries({ queryKey: ['getDefaultUser'] });
+			queryClient.invalidateQueries({ queryKey: ['fetchLoggedInProfile'] });
+			queryClient.invalidateQueries({ queryKey: ['fetchMinecraftProfile'] });
+			toast({ type: 'success', title: 'Changed Skin' });
+		}
+		catch (error) {
+			console.error(error);
+		}
+	};
 	return (
 		<div className="flex flex-row justify-between items-end gap-16">
-			<div className="flex-1 flex flex-row justify-between">
-				<h1 className="text-3xl font-semibold">{`${username}'s Skins`}</h1>
-
-				<div className="flex flex-row gap-2">
-					<Button color="primary" onClick={save} size="large">
-						<p>Save</p>
-					</Button>
-				</div>
-			</div>
+			<h1 className="text-3xl font-semibold">{`${profileData?.username ?? 'UNKNOWN'}'s Skins`}</h1>
+			<Tooltip text="Save skin to the account">
+				<Button color="primary" onClick={save} size="normal">
+					<p>Save</p>
+				</Button>
+			</Tooltip>
 		</div>
 	);
 }
 
-function HeaderSmall() {
-	return (
-		<div className="flex flex-row justify-between items-center h-full">
-			<h1 className="text-2lg h-full font-medium">Accounts</h1>
-		</div>
-	);
+interface ViewerProps {
+	skin?: Skin;
+	cape?: Cape | null;
+	height?: number;
+	width?: number;
+	showText?: boolean;
+	enableControls?: boolean;
+	flip?: boolean;
+	slim?: boolean | null;
 }
 
-function Viewer({ skinURL, capeURL, height = 400, width = 250, showText = true, animation, enableControls = false, flip = false, shouldShowElytra }: { skinURL: string; capeURL: string; height?: number; width?: number; showText?: boolean; animation?: PlayerAnimation; enableControls?: boolean; flip?: boolean; shouldShowElytra: boolean }) {
+function Viewer({
+	skin,
+	cape,
+	height = 400,
+	width = 250,
+	showText = true,
+	enableControls = false,
+	flip = false,
+	slim,
+}: ViewerProps) {
+	const {
+		animation,
+		animationPlaying,
+		shouldShowElytra,
+		skin: currentSkin,
+		cape: currentCape,
+		capes,
+		slim: isSlim,
+	} = useSkinRenderContext();
+	const rotation = flip ? { ...DefaultRoation, x: -DefaultRoation.x, z: -DefaultRoation.z } : DefaultRoation;
+	if (skin === undefined)
+		skin = currentSkin;
+	if (cape === undefined)
+		cape = currentCape;
+	if (cape === null)
+		cape = capes[0];
+	if (slim === undefined || slim === null)
+		slim = isSlim;
 	return (
 		<SkinViewer
-			animate
+			animate={animationPlaying}
 			animation={animation}
 			autoRotate={false}
-			capeUrl={capeURL === '' ? null : capeURL}
+			capeUrl={cape.url !== '' ? cape.url : null}
 			className="h-full w-full max-w-1/4"
 			elytra={shouldShowElytra}
 			enableDamping={enableControls}
@@ -474,10 +641,10 @@ function Viewer({ skinURL, capeURL, height = 400, width = 250, showText = true, 
 			enableRotate={enableControls}
 			enableZoom={enableControls}
 			height={height}
-			playerRotateTheta={(-Math.PI / 6) - (flip ? Math.PI : 0)}
+			isSlim={slim}
+			playerRotation={rotation}
 			showText={showText}
-			skinUrl={skinURL}
-			translateRotateY={-2}
+			skinUrl={skin.url}
 			width={width}
 			zoom={0.8}
 		/>

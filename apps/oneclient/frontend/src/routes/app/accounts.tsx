@@ -7,6 +7,7 @@ import { useCommandMut, useCommandSuspense } from '@onelauncher/common';
 import { Button } from '@onelauncher/common/components';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
+import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
 import { Button as AriaButton } from 'react-aria-components';
 import { twMerge } from 'tailwind-merge';
 
@@ -18,7 +19,7 @@ function RouteComponent() {
 	return (
 		<SheetPage
 			headerLarge={<HeaderLarge />}
-			headerSmall={<HeaderSmall />}
+			headerSmall={<HeaderLarge />}
 		>
 			<SheetPage.Content>
 				<div className="flex-1 flex flex-row gap-8">
@@ -36,22 +37,8 @@ function RouteComponent() {
 function HeaderLarge() {
 	return (
 		<div className="flex flex-row justify-between items-end gap-16">
-			<div className="flex-1 flex flex-col">
-				<h1 className="text-3xl font-semibold">Accounts</h1>
-				<p className="text-md font-medium text-fg-secondary">Something something in corporate style fashion about picking your preferred gamemodes and versions and optionally loader so that oneclient can pick something for them</p>
-			</div>
-
+			<h1 className="text-3xl font-semibold">Accounts</h1>
 			<AddAccountButton size="large" />
-		</div>
-	);
-}
-
-function HeaderSmall() {
-	return (
-		<div className="flex flex-row justify-between items-center h-full">
-			<h1 className="text-2lg h-full font-medium">Accounts</h1>
-
-			<AddAccountButton size="normal" />
 		</div>
 	);
 }
@@ -64,9 +51,9 @@ function Viewer() {
 		<SkinViewer
 			capeUrl={profile?.cape_url}
 			className="h-full w-full max-w-1/4"
-			height={400}
+			height={504}
 			skinUrl={profile?.skin_url}
-			width={250}
+			width={315}
 		/>
 	);
 }
@@ -78,38 +65,36 @@ function AccountList() {
 	const queryClient = useQueryClient();
 	const { mutate: setDefaultUser } = useCommandMut(bindings.core.setDefaultUser, {
 		onSuccess() {
-			queryClient.invalidateQueries({
-				queryKey: ['getDefaultUser'],
-			});
+			queryClient.invalidateQueries({ queryKey: ['getDefaultUser'] });
 		},
 	});
 	const { mutate: removeUser } = useCommandMut(bindings.core.removeUser, {
 		onSuccess() {
-			queryClient.invalidateQueries({
-				queryKey: ['getDefaultUser'],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ['getUsers'],
-			});
+			queryClient.invalidateQueries({ queryKey: ['getDefaultUser'] });
+			queryClient.invalidateQueries({ queryKey: ['getUsers'] });
 		},
 	});
 
 	return (
-		<div className="flex-1 flex flex-col gap-2">
-			{accounts.map(account => (
-				<AccountRow
-					key={account.id}
-					onDelete={() => removeUser(account.id)}
-					onPress={() => setDefaultUser(account.id)}
-					profile={account}
-					selected={currentAccount?.id === account.id}
-				/>
-			))}
+		<OverlayScrollbarsComponent className="w-full">
+			<div className="flex flex-col gap-2 m-2 max-h-96">
+				{accounts.sort((a, b) => a.username.localeCompare(b.username)).map(account => (
+					<AccountRow
+						key={account.id}
+						onDelete={() => removeUser(account.id)}
+						onPress={() => setDefaultUser(account.id)}
+						profile={account}
+						selected={currentAccount?.id === account.id}
+					/>
+				))}
 
-			{accounts.length === 0 && (
-				<p className="h-full flex justify-center items-center text-fg-secondary text-sm">No accounts found.</p>
-			)}
-		</div>
+				{accounts.length === 0 && (
+					<p className="flex justify-center items-center text-fg-secondary text-sm">
+						No accounts found.
+					</p>
+				)}
+			</div>
+		</OverlayScrollbarsComponent>
 	);
 }
 

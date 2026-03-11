@@ -2,6 +2,7 @@ export * from './AnimatedOutlet';
 export * from './Button';
 export * from './ContextMenu';
 export * from './Dropdown';
+export * from './Icons';
 export * from './Menu';
 export * from './Popup';
 export * from './SelectList';

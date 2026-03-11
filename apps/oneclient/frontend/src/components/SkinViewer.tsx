@@ -1,7 +1,20 @@
+import type { ModelType } from 'skinview-utils';
 import { getSkinUrl } from '@/utils/minecraft';
 import { useEffect, useRef } from 'react';
 import * as skinviewer from 'skinview3d';
 import { twMerge } from 'tailwind-merge';
+
+export interface Position {
+	x: number;
+	y: number;
+	z: number;
+}
+
+export const DefaultRoation: Position = {
+	x: -21.100906085965875,
+	y: 24.365227617754844,
+	z: 36.54784142663224,
+};
 
 export interface SkinViewerProps {
 	skinUrl?: string | undefined | null;
@@ -12,11 +25,7 @@ export interface SkinViewerProps {
 	autoRotate?: boolean;
 	autoRotateSpeed?: number;
 	showText?: boolean;
-	playerRotatePhi?: number;
-	playerRotateTheta?: number;
-	translateRotateX?: number;
-	translateRotateY?: number;
-	translateRotateZ?: number;
+	playerRotation?: Position;
 	zoom?: number;
 	animate?: boolean;
 	animation?: skinviewer.PlayerAnimation;
@@ -25,6 +34,7 @@ export interface SkinViewerProps {
 	enableRotate?: boolean;
 	enablePan?: boolean;
 	elytra?: boolean;
+	isSlim?: boolean;
 }
 
 const defaultIdleAnimation = new skinviewer.IdleAnimation();
@@ -38,11 +48,7 @@ export function SkinViewer({
 	autoRotate = true,
 	autoRotateSpeed = 0.25,
 	showText = true,
-	playerRotatePhi = Math.PI / 3,
-	playerRotateTheta = -Math.PI / 6,
-	translateRotateX = 0,
-	translateRotateY = 0,
-	translateRotateZ = 0,
+	playerRotation,
 	zoom = 0.9,
 	animate = false,
 	animation = defaultIdleAnimation,
@@ -51,7 +57,11 @@ export function SkinViewer({
 	enableRotate = true,
 	enablePan = true,
 	elytra = false,
+	isSlim,
 }: SkinViewerProps) {
+	if (playerRotation === undefined)
+		playerRotation = DefaultRoation;
+
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const viewerRef = useRef<skinviewer.SkinViewer | null>(null);
 
@@ -70,19 +80,7 @@ export function SkinViewer({
 
 		viewer.zoom = zoom;
 
-		const setAngle = (phi: number, theta: number) => {
-			const r = viewer.controls.object.position.distanceTo(viewer.controls.target);
-			const x = r * Math.cos(phi - Math.PI / 2) * Math.sin(theta) + viewer.controls.target.x;
-			const y = r * Math.sin(phi + Math.PI / 2) + viewer.controls.target.y;
-			const z = r * Math.cos(phi - Math.PI / 2) * Math.cos(theta) + viewer.controls.target.z;
-			viewer.controls.object.position.set(x, y, z);
-			viewer.controls.object.lookAt(viewer.controls.target);
-		};
-		setAngle(playerRotatePhi, playerRotateTheta);
-
-		viewer.playerWrapper.translateX(translateRotateX);
-		viewer.playerWrapper.translateY(translateRotateY);
-		viewer.playerWrapper.translateZ(translateRotateZ);
+		viewer.controls.object.position.set(playerRotation.x, playerRotation.y, playerRotation.z);
 
 		viewer.animation = animation;
 
@@ -94,15 +92,19 @@ export function SkinViewer({
 		return () => {
 			viewer.dispose();
 		};
-	// eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount-only initialization
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount-only initialization
 	}, []);
 
 	useEffect(() => {
 		if (!viewerRef.current)
 			return;
 
-		viewerRef.current.loadSkin(getSkinUrl(skinUrl));
-	}, [skinUrl]);
+		let model: ModelType | 'auto-detect' = 'auto-detect';
+		if (isSlim !== undefined)
+			model = isSlim ? 'slim' : 'default';
+
+		viewerRef.current.loadSkin(getSkinUrl(skinUrl), { model });
+	}, [skinUrl, isSlim]);
 
 	useEffect(() => {
 		if (!viewerRef.current)
@@ -125,7 +127,9 @@ export function SkinViewer({
 		if (!viewerRef.current)
 			return;
 
+		const playbackState = viewerRef.current.animation?.paused ?? false;
 		viewerRef.current.animation = animation;
+		viewerRef.current.animation.paused = playbackState;
 	}, [animation]);
 
 	useEffect(() => {

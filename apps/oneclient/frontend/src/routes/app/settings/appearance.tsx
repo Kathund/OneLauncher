@@ -1,6 +1,7 @@
 import { SettingDropdown, SettingNumber, SettingsRow, SettingSwitch } from '@/components';
 import { useSettings } from '@/hooks/useSettings';
 import { Sidebar } from '@/routes/app/settings/route';
+import { TitleCase } from '@/utils/string';
 import { ToastPositions, useToast } from '@/utils/toast';
 import { Button } from '@onelauncher/common/components';
 import { createFileRoute } from '@tanstack/react-router';
@@ -23,7 +24,7 @@ function RouteComponent() {
 				<SettingsRow.Header>Toasts</SettingsRow.Header>
 
 				<SettingsRow description="Where the toast will show up" title="Position">
-					<SettingDropdown options={ToastPositions} setting={createSetting('toast_position')} />
+					<SettingDropdown options={ToastPositions.map(pos => ({ key: pos, label: TitleCase(pos) }))} setting={createSetting('toast_position')} />
 				</SettingsRow>
 
 				<SettingsRow description="Should the toast expire and auto close" title="Auto Close">

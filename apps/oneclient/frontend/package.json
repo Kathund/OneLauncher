@@ -43,6 +43,7 @@
 		"react-toastify": "catalog:",
 		"rehype-raw": "^7.0.0",
 		"remark-gfm": "^4.0.1",
+		"skinview-utils": "catalog:",
 		"skinview3d": "catalog:",
 		"tailwind-merge": "catalog:",
 		"tailwind-variants": "catalog:",

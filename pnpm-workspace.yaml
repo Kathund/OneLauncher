@@ -57,3 +57,4 @@ catalog:
   zustand: ^5.0.5
   valtio: ^2.1.5
   skinview3d: ^3.4.1
+  skinview-utils: ^0.7.1

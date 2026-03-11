@@ -117,6 +117,9 @@ catalogs:
     rimraf:
       specifier: ^6.0.1
       version: 6.0.1
+    skinview-utils:
+      specifier: ^0.7.1
+      version: 0.7.1
     skinview3d:
       specifier: ^3.4.1
       version: 3.4.1
@@ -328,6 +331,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      skinview-utils:
+        specifier: 'catalog:'
+        version: 0.7.1
       skinview3d:
         specifier: 'catalog:'
         version: 3.4.1
