@@ -18,7 +18,14 @@ interface Skin {
 	url: string;
 }
 
+enum CapeType {
+	Mojang,
+	PolyPlus,
+	Other,
+}
+
 interface Cape {
+	type: CapeType;
 	url: string;
 	id: string;
 }
@@ -187,13 +194,41 @@ function RouteComponent() {
 		setAnimation(foundAnimation);
 	};
 
-	const [cape, setCape] = useState<Cape>({ url: '', id: '' });
+	const [cape, setCape] = useState<Cape>({ url: '', id: '', type: CapeType.Other });
+
+	const [polyPlusCapes, setPolyPlusCapes] = useState<Array<Cape>>([]);
+	useEffect(() => {
+		async function loadPolyPlusCosmetics() {
+			if (!playerData)
+				return;
+
+			// const cosmetics = await bindings.core.getPlayerCosmetics(playerData.uuid);
+			const cosmetics = await bindings.core.getPlayerCosmetics('63677969c51746fbb60fa130b3d9beb9');
+			const fetchedCapes = cosmetics.cosmetics
+				.filter(cosmetic => cosmetic.type === 'cape')
+				.filter(cosmetic => cosmetic.url !== null)
+				.map(cosmetic => ({
+					url: cosmetic.url as string,
+					id: cosmetic.id.toString(),
+					type: CapeType.PolyPlus,
+				}));
+
+			setPolyPlusCapes(fetchedCapes);
+		}
+
+		loadPolyPlusCosmetics();
+	}, [playerData]);
+
 	const capes = useMemo<Array<Cape>>(() => {
 		if (!profileData)
-			return [{ url: '', id: '' }];
+			return [{ url: '', id: '', type: CapeType.Other }];
 
-		return [{ url: '', id: '' }, ...profileData.capes.map(cape => ({ url: cape.url, id: cape.id }))];
-	}, [profileData]);
+		return [
+			{ url: '', id: '', type: CapeType.Other },
+			...profileData.capes.map(cape => ({ url: cape.url, id: cape.id, type: CapeType.Mojang })),
+			...polyPlusCapes,
+		];
+	}, [profileData, polyPlusCapes]);
 
 	const { skins, addSkin, removeSkin } = useSkinHistory();
 

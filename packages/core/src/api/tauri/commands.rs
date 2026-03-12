@@ -280,6 +280,14 @@ pub trait TauriLauncherApi {
 	) -> LauncherResult<crate::utils::minecraft::MowojangProfile>;
 	// endregion: minecraft
 
+	// MARK: API: polyplus
+	// region: polyplus
+	#[taurpc(alias = "getPlayerCosmetics")]
+	async fn get_player_cosmetics(
+		uuid: String,
+	) -> LauncherResult<crate::utils::polyplus::PolyPlusPlayer>;
+	// endregion: polyplus
+
 	// MARK: API: discord RPC
 	// region: discord RPC
 	#[taurpc(alias = "setDiscordRPCMessage")]
@@ -996,6 +1004,16 @@ impl TauriLauncherApi for TauriLauncherApiImpl {
 		crate::utils::minecraft::convert_username_uuid(&username_uuid).await
 	}
 	// endregion: minecraft
+
+	// MARK: Impl: polyplus
+	// region: polyplus
+	async fn get_player_cosmetics(
+		self,
+		uuid: String,
+	) -> LauncherResult<crate::utils::polyplus::PolyPlusPlayer> {
+		crate::utils::polyplus::get_player_cosmetics(&uuid).await
+	}
+	// endregion: polyplus
 
 	// MARK: Impl: discord RPC
 	// region: discord RPC

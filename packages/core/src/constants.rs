@@ -32,6 +32,8 @@ pub const MCLOGS_API_URL: &str = "https://api.mclo.gs/1";
 /// <https://skyclient.co/> metadata base url.
 pub const SKYCLIENT_BASE_URL: &str =
 	"https://raw.githubusercontent.com/SkyblockClient/SkyblockClient-REPO/refs/heads/main/v1";
+/// The `PolyPlus` API base url.
+pub const POLY_PLUS_BASE_API_URL: &str = "https://plus-staging.polyfrost.org";
 
 // =========== Hacky Mojang-spec OS constants ===========
 #[cfg(target_os = "windows")]

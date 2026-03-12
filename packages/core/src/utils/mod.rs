@@ -5,6 +5,7 @@ pub mod io;
 pub mod minecraft;
 pub mod os_ext;
 pub mod pagination;
+pub mod polyplus;
 
 #[async_trait::async_trait]
 pub trait DatabaseModelExt {
